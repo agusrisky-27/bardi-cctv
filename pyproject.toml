@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rcis"
+version = "0.1.0"
+description = "Restaurant CCTV Intelligence System (RCIS) - Modular Video Analytics Pipeline"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "RCIS Engineering Team" }
+]
+license = { text = "Proprietary" }
+dependencies = [
+    "torch>=2.2.0",
+    "torchvision>=0.17.0",
+    "ultralytics>=8.3.0",
+    "supervision>=0.25.0",
+    "opencv-python>=4.10.0",
+    "pydantic>=2.7.0",
+    "pyyaml>=6.0.1",
+    "psutil>=5.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra -q --import-mode=importlib"
+testpaths = [
+    "tests",
+]
+pythonpath = ["src"]

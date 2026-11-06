@@ -1,0 +1,70 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Environment variables & secrets
+.env
+*.env
+!.env.example
+
+# IDE & Editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Local data & models (do not commit raw video / CCTV footage / model weights / output videos)
+data/videos/*.mp4
+data/videos/*.avi
+data/videos/*.mkv
+data/frames/*
+data/exports/*.mp4
+data/exports/*.avi
+!data/videos/.gitkeep
+!data/frames/.gitkeep
+!data/exports/.gitkeep
+models/*.pt
+models/*.onnx
+models/*.engine
+!models/README.md
+
+# OS specific
+.DS_Store
+Thumbs.db

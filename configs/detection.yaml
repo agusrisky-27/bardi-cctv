@@ -1,0 +1,34 @@
+# RCIS Person Detection & Tracking Configuration
+detection:
+  model_name: "yolo11n.pt" # Ultralytics pretrained weights (nano size: ~5.4MB, fast on M4)
+  model_path: "models/yolo11n.pt"
+  
+  # Compute target: "mps" (Apple Silicon Metal), "cpu", or "cuda"
+  device: "mps"
+  
+  # Target class IDs (COCO class 0 is "person")
+  target_classes: [0]
+  
+  # Inference parameters
+  confidence_threshold: 0.35
+  iou_threshold: 0.50
+  input_size: 640
+  half_precision: false # PyTorch MPS handles FP32 natively; quantize=16 where supported
+
+tracking:
+  tracker_type: "bytetrack"
+  track_activation_threshold: 0.30
+  lost_track_buffer_frames: 30 # Number of frames to preserve lost track before removal (~1 second at 30fps)
+  minimum_matching_threshold: 0.80
+  minimum_consecutive_frames: 3 # Minimum detections before confirming track
+  trajectory_history_length: 60 # Number of historical footpoints to store for trail visualization
+
+visualization:
+  show_bounding_boxes: true
+  show_track_ids: true
+  show_confidences: true
+  show_footpoints: true
+  show_trajectories: true
+  show_telemetry_hud: true
+  box_thickness: 2
+  text_scale: 0.5

@@ -1,0 +1,59 @@
+# RCIS Polygon Zones & Virtual Lines Configuration Example
+# Coordinate format: Normalized floats [0.0 - 1.0] or absolute pixels [x, y].
+# Normalized coordinates adapt automatically if video resolution changes.
+
+coordinate_format: "normalized" # "normalized" or "absolute"
+
+lines:
+  - id: "line_entrance"
+    name: "Main Entrance Crossing"
+    start_point: [0.15, 0.85]
+    end_point: [0.45, 0.85]
+    in_direction: "down" # Vector direction indicating entrance vs exit
+
+zones:
+  - id: "zone_entrance"
+    name: "Vestibule / Entrance"
+    color: "#2ECC71" # Green
+    polygon:
+      - [0.10, 0.70]
+      - [0.50, 0.70]
+      - [0.50, 0.95]
+      - [0.10, 0.95]
+
+  - id: "zone_waiting"
+    name: "Customer Waiting Area"
+    color: "#F39C12" # Orange
+    polygon:
+      - [0.52, 0.60]
+      - [0.85, 0.60]
+      - [0.85, 0.90]
+      - [0.52, 0.90]
+
+  - id: "zone_cashier"
+    name: "Order & Cashier Counter"
+    color: "#3498DB" # Blue
+    polygon:
+      - [0.05, 0.30]
+      - [0.35, 0.30]
+      - [0.35, 0.65]
+      - [0.05, 0.65]
+
+  - id: "zone_dining"
+    name: "Dining Tables Area"
+    color: "#9B59B6" # Purple
+    polygon:
+      - [0.38, 0.15]
+      - [0.95, 0.15]
+      - [0.95, 0.58]
+      - [0.38, 0.58]
+
+  - id: "zone_kitchen_restricted"
+    name: "Kitchen & Staff Only"
+    color: "#E74C3C" # Red
+    restricted: true
+    polygon:
+      - [0.02, 0.05]
+      - [0.35, 0.05]
+      - [0.35, 0.28]
+      - [0.02, 0.28]

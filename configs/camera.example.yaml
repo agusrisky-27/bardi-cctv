@@ -1,0 +1,29 @@
+# RCIS Camera Configuration Template
+camera:
+  id: "cam_restaurant_01"
+  name: "Main Dining & Entrance Camera"
+  description: "Ceiling-mounted CCTV monitoring entrance, waiting area, and dining room"
+  
+  # Source type: "file", "webcam", or "rtsp"
+  source_type: "file"
+  
+  # Parameters for file source
+  file:
+    path: "data/videos/sample.mp4"
+    loop: false
+    start_frame: 0
+  
+  # Parameters for webcam source
+  webcam:
+    device_index: 0
+    desired_fps: 30
+    desired_width: 1280
+    desired_height: 720
+  
+  # Parameters for RTSP source (leave passwords in .env, never commit here)
+  rtsp:
+    url: "" # e.g. "rtsp://192.168.1.100:554/stream1" or env var ${RCIS_RTSP_URL}
+    timeout_sec: 10
+    reconnect_delay_sec: 5
+    max_reconnect_attempts: 10
+    buffer_size: 1

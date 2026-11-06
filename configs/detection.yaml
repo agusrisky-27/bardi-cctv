@@ -32,3 +32,18 @@ visualization:
   show_telemetry_hud: true
   box_thickness: 2
   text_scale: 0.5
+
+# Restaurant analytics thresholds (seconds unless noted). Tune here, never hardcode.
+analytics:
+  zones_path: "configs/zones.yaml"     # create with: python scripts/draw_zones.py
+  db_path: "data/rcis.db"
+  exports_dir: "data/exports"          # heatmap.npy / heatmap.png land here
+  frame_stride: 2                      # process every 2nd frame (target 5-10 FPS on Mac)
+  sitting_max_speed: 0.03              # footpoint speed below this (frame heights / s) = still
+  sitting_min_seconds: 10              # still inside a table zone this long = "duduk"
+  speed_window_seconds: 1.5
+  visit_timeout_seconds: 5             # track unseen this long = person left
+  min_visit_seconds: 2                 # ignore shorter tracks (false positives)
+  table_merge_gap_seconds: 20          # table stays occupied across short occlusions / ID switches
+  heatmap_scale: 0.25                  # heatmap grid = frame size x this
+  heatmap_save_every_seconds: 60

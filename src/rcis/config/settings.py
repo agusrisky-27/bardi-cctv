@@ -5,6 +5,7 @@ Configuration management for RCIS using Pydantic schemas.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import List, Literal, Optional
 import yaml
@@ -75,11 +76,30 @@ class VisualizationConfig(BaseModel):
     text_scale: float = 0.5
 
 
+class AnalyticsConfig(BaseModel):
+    """Thresholds for zone, dwell, sitting and visit analytics (all times in seconds)."""
+
+    zones_path: str = "configs/zones.yaml"
+    db_path: str = "data/rcis.db"
+    exports_dir: str = "data/exports"
+    frame_stride: int = Field(default=1, ge=1, le=30)  # process every Nth frame
+    # Speed in "frame heights per second" so it is resolution independent
+    sitting_max_speed: float = Field(default=0.03, ge=0.0)
+    sitting_min_seconds: float = Field(default=10.0, ge=0.0)
+    speed_window_seconds: float = Field(default=1.5, gt=0.0)
+    visit_timeout_seconds: float = Field(default=5.0, gt=0.0)  # track unseen this long = left
+    min_visit_seconds: float = Field(default=2.0, ge=0.0)  # shorter tracks are noise
+    table_merge_gap_seconds: float = Field(default=20.0, ge=0.0)  # tolerate ID switches at a table
+    heatmap_scale: float = Field(default=0.25, gt=0.0, le=1.0)
+    heatmap_save_every_seconds: float = Field(default=60.0, gt=0.0)
+
+
 class AppConfig(BaseModel):
     camera: CameraConfig = Field(default_factory=CameraConfig)
     detection: DetectionConfig = Field(default_factory=DetectionConfig)
     tracking: TrackingConfig = Field(default_factory=TrackingConfig)
     visualization: VisualizationConfig = Field(default_factory=VisualizationConfig)
+    analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig)
 
     @classmethod
     def load(
@@ -109,10 +129,21 @@ class AppConfig(BaseModel):
                 try:
                     with open(d_path, "r", encoding="utf-8") as f:
                         data = yaml.safe_load(f) or {}
-                        for section in ("detection", "tracking", "visualization"):
+                        for section in ("detection", "tracking", "visualization", "analytics"):
                             if section in data:
                                 config_data[section] = data[section]
                 except Exception as e:
                     logger.warning("Failed to load detection config from %s: %s", d_path, e)
 
         return cls(**config_data)
+
+
+def load_dotenv(path: str = ".env") -> None:
+    """Minimal .env reader (KEY=VALUE lines); real env vars win."""
+    if not Path(path).exists():
+        return
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.split(" #")[0].strip().strip('"').strip("'"))

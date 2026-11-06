@@ -1,59 +1,46 @@
-# RCIS Polygon Zones & Virtual Lines Configuration Example
-# Coordinate format: Normalized floats [0.0 - 1.0] or absolute pixels [x, y].
-# Normalized coordinates adapt automatically if video resolution changes.
+# RCIS zones & door line (contoh untuk simulasi di ruang meeting).
+# Buat versi sendiri dari frame kamera asli:  python scripts/draw_zones.py --source <video|rtsp|0>
+# Hasilnya configs/zones.yaml (dipakai pipeline). File ini hanya contoh.
+#
+# coordinate_format:
+#   normalized -> [x, y] dalam 0.0-1.0 (ikut berubah kalau resolusi stream berubah)
+#   absolute   -> [x, y] piksel
+# PERINGATAN PTZ: zona hanya valid untuk satu posisi kamera. Jika kamera diputar, gambar ulang zona.
+#
+# kind zona:
+#   table      -> meja (dipakai untuk status duduk, dwell di meja, sesi meja, waktu tunggu makanan)
+#   door       -> area pintu
+#   cashier    -> kasir
+#   queue      -> antrean
+#   staff      -> area staf (dipakai heuristik pelayan vs pelanggan)
+#   restricted -> zona terlarang (dapur/gudang) untuk alert keamanan
+#   area       -> zona umum lain
 
-coordinate_format: "normalized" # "normalized" or "absolute"
+coordinate_format: "normalized"
 
-lines:
-  - id: "line_entrance"
-    name: "Main Entrance Crossing"
-    start_point: [0.15, 0.85]
-    end_point: [0.45, 0.85]
-    in_direction: "down" # Vector direction indicating entrance vs exit
+# Garis pintu. Arah "in"/"out" mengikuti supervision.LineZone:
+# jika hitungan masuk/keluar terbalik, tukar start dan end.
+door_line:
+  start: [0.05, 0.80]
+  end: [0.30, 0.80]
 
 zones:
-  - id: "zone_entrance"
-    name: "Vestibule / Entrance"
-    color: "#2ECC71" # Green
-    polygon:
-      - [0.10, 0.70]
-      - [0.50, 0.70]
-      - [0.50, 0.95]
-      - [0.10, 0.95]
+  - name: "pintu"
+    kind: "door"
+    polygon: [[0.02, 0.65], [0.33, 0.65], [0.33, 0.98], [0.02, 0.98]]
 
-  - id: "zone_waiting"
-    name: "Customer Waiting Area"
-    color: "#F39C12" # Orange
-    polygon:
-      - [0.52, 0.60]
-      - [0.85, 0.60]
-      - [0.85, 0.90]
-      - [0.52, 0.90]
+  - name: "meja_1"
+    kind: "table"
+    polygon: [[0.38, 0.40], [0.65, 0.40], [0.65, 0.75], [0.38, 0.75]]
 
-  - id: "zone_cashier"
-    name: "Order & Cashier Counter"
-    color: "#3498DB" # Blue
-    polygon:
-      - [0.05, 0.30]
-      - [0.35, 0.30]
-      - [0.35, 0.65]
-      - [0.05, 0.65]
+  - name: "meja_2"
+    kind: "table"
+    polygon: [[0.68, 0.40], [0.95, 0.40], [0.95, 0.75], [0.68, 0.75]]
 
-  - id: "zone_dining"
-    name: "Dining Tables Area"
-    color: "#9B59B6" # Purple
-    polygon:
-      - [0.38, 0.15]
-      - [0.95, 0.15]
-      - [0.95, 0.58]
-      - [0.38, 0.58]
+  - name: "kasir"
+    kind: "cashier"
+    polygon: [[0.38, 0.10], [0.62, 0.10], [0.62, 0.35], [0.38, 0.35]]
 
-  - id: "zone_kitchen_restricted"
-    name: "Kitchen & Staff Only"
-    color: "#E74C3C" # Red
-    restricted: true
-    polygon:
-      - [0.02, 0.05]
-      - [0.35, 0.05]
-      - [0.35, 0.28]
-      - [0.02, 0.28]
+  - name: "gudang"
+    kind: "restricted"
+    polygon: [[0.70, 0.05], [0.98, 0.05], [0.98, 0.35], [0.70, 0.35]]

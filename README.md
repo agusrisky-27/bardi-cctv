@@ -11,13 +11,63 @@ RCIS is a modular, privacy-preserving **Intelligent Video Analytics (IVA)** pipe
 
 ---
 
+## 0. Panduan Cepat (Prototype Lokal)
+
+Semua berjalan lokal di Mac. Tidak ada hosting. **Training tidak pernah dijalankan di Mac** — hanya lewat notebook Colab.
+
+### Fase 0 — Koneksi kamera BARDI
+
+1. Pasang kamera di app BARDI Smart Home, sambungkan ke Wi-Fi yang sama dengan Mac.
+2. Cari IP kamera: app BARDI (info perangkat) atau halaman admin router.
+3. Cek apakah ada menu **ONVIF / RTSP** di pengaturan kamera di app. Jika ada, aktifkan dan catat user/password-nya.
+   Banyak kamera BARDI (basis Tuya) **tidak** membuka RTSP; jika tidak ada menu itu, lanjut pakai webcam/video untuk uji coba.
+4. Tes di VLC (*File → Open Network*):
+   `rtsp://admin:PASSWORD@<IP_KAMERA>:8554/Streaming/Channels/102` (sub-stream, ringan) atau `.../101` (main).
+5. Jika VLC tampil, isi `RCIS_RTSP_URL` di `.env` (salin dari `.env.example`), lalu:
+   ```bash
+   python scripts/inspect_camera.py --test-rtsp "$RCIS_RTSP_URL"
+   ```
+
+### Fase 1 — MVP tanpa training
+
+```bash
+source .venv/bin/activate
+export PYTHONPATH=src
+
+# 1) Gambar zona & garis pintu dari frame asli -> configs/zones.yaml
+python scripts/draw_zones.py --source data/videos/sample.mp4   # atau --source 0 (webcam) / --source rtsp
+
+# 2) Jalankan analitik
+python -m rcis.cli --video data/videos/sample.mp4 --display --stride 2   # file video
+python -m rcis.cli --webcam 0 --display                                  # webcam Mac (simulasi ruang meeting)
+python -m rcis.cli --rtsp --display                                      # BARDI via RCIS_RTSP_URL di .env
+
+# 3) Lihat hasil
+sqlite3 data/rcis.db "SELECT * FROM hourly_stats;"
+open data/exports/heatmap.png
+```
+
+Output: tabel `visits`, `zone_events`, `table_sessions`, `line_crossings`, view `hourly_stats` di `data/rcis.db`, serta `data/exports/heatmap.png`.
+Semua threshold (duduk, dwell, timeout, stride) ada di bagian `analytics:` pada `configs/detection.yaml`.
+
+> **Peringatan kamera PTZ:** analitik menganggap posisi kamera tetap. Jika kamera BARDI diputar (dari app atau auto-tracking), semua zona jadi tidak valid — matikan auto-tracking/patrol dan gambar ulang zona.
+
+### Contoh papan pemberitahuan
+
+> **AREA INI DIAWASI CCTV DAN ANALITIK ANONIM**
+> Kamera digunakan untuk keamanan dan statistik pengunjung (jumlah, waktu kunjungan, area ramai).
+> Tidak ada pengenalan wajah. Tidak ada data identitas yang disimpan.
+> Pertanyaan: hubungi pengelola.
+
+---
+
 ## 1. Architectural Highlights
 
 - **Decoupled Perception & Analytics**: Stateless object detection (`BaseDetector`) is strictly separated from temporal state tracking (`BaseTracker`) and geometric analytics.
 - **Hardware-Accelerated on Apple Silicon**: Full native support for Apple Silicon Metal Performance Shaders (`mps`), achieving **> 50 FPS** real-time inference on Apple M4 hardware.
 - **Privacy-Preserving by Design**:
   - **No facial recognition** or biometric templates.
-  - **No demographic inference** (no gender/age classification).
+  - **Gender only as an aggregate statistical estimate** (Phase 3, voted per track, limited accuracy, crops never written to disk).
   - **Session-scoped temporary IDs** only (Kalman filter track IDs are never linked to personal identities).
   - **100% On-Premise Processing**: Video streams never leave local device memory.
 - **Modular Video Adapters**: Unified support for offline video files (`.mp4`, `.avi`), local USB/FaceTime webcams, and network RTSP IP cameras with automatic reconnection logic.

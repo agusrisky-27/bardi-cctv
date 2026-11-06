@@ -68,3 +68,8 @@ models/*.engine
 # OS specific
 .DS_Store
 Thumbs.db
+
+# Analytics outputs (anonymous but local-only)
+data/*.db
+data/exports/heatmap.*
+configs/zones.yaml

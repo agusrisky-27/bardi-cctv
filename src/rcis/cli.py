@@ -6,10 +6,10 @@ from __future__ import annotations
 
 import argparse
 import logging
-from pathlib import Path
+import os
 import sys
 
-from rcis.config.settings import AppConfig
+from rcis.config.settings import AppConfig, load_dotenv
 from rcis.pipeline import VideoAnalyticsPipeline
 
 logging.basicConfig(
@@ -39,7 +39,9 @@ def parse_args() -> argparse.Namespace:
     source_group.add_argument(
         "--rtsp",
         type=str,
-        help="RTSP network stream URL",
+        nargs="?",
+        const="",
+        help="RTSP network stream URL (no value = RCIS_RTSP_URL from .env)",
     )
 
     # Configuration overrides
@@ -82,6 +84,16 @@ def parse_args() -> argparse.Namespace:
         help="Stop processing after reaching this number of frames",
     )
     parser.add_argument(
+        "--stride",
+        type=int,
+        help="Process every Nth frame (overrides analytics.frame_stride)",
+    )
+    parser.add_argument(
+        "--zones",
+        type=str,
+        help="Path to zones YAML (overrides analytics.zones_path)",
+    )
+    parser.add_argument(
         "--loop",
         action="store_true",
         help="Loop video file continuously",
@@ -91,6 +103,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    load_dotenv()
     args = parse_args()
 
     # Load configuration
@@ -106,9 +119,14 @@ def main() -> int:
     elif args.webcam is not None:
         config.camera.source_type = "webcam"
         config.camera.webcam.device_index = args.webcam
-    elif args.rtsp:
+    elif args.rtsp is not None:
         config.camera.source_type = "rtsp"
-        config.camera.rtsp.url = args.rtsp
+        config.camera.rtsp.url = args.rtsp or os.environ.get("RCIS_RTSP_URL", "")
+
+    if args.stride:
+        config.analytics.frame_stride = args.stride
+    if args.zones:
+        config.analytics.zones_path = args.zones
 
     if args.loop:
         config.camera.file.loop = True

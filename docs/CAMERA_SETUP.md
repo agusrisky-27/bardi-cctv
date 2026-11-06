@@ -52,3 +52,18 @@ python scripts/inspect_camera.py --test-webcam 0
 # Probe an RTSP IP camera connection
 python scripts/inspect_camera.py --test-rtsp "rtsp://admin:password@192.168.1.100:554/stream1"
 ```
+
+---
+
+## 4. BARDI Smart IP Camera (PTZ 360)
+
+Kamera project ini: BARDI indoor PTZ 360 (putih, Wi-Fi, slot microSD). BARDI tidak menerbitkan dokumentasi RTSP resmi.
+
+- Data komunitas (iSpyConnect, model tidak spesifik): RTSP port **8554**, path `/Streaming/Channels/101` (main) dan `/Streaming/Channels/102` (sub). Belum terverifikasi untuk unit ini.
+- RTSP/ONVIF biasanya harus diaktifkan dulu di pengaturan kamera pada app (jika firmware mendukung). Tanpa menu itu, stream hanya lewat cloud app dan **tidak bisa** dibaca OpenCV.
+- Cek port terbuka: `nc -zv <IP_KAMERA> 8554`
+- Pakai sub-stream (`102`) untuk analitik: lebih ringan, cukup untuk input YOLO 640.
+- Bersihkan lensa sebelum tes; lensa kotor menurunkan confidence deteksi.
+- Matikan auto-tracking / patrol PTZ selama analitik (zona berbasis piksel tetap).
+
+Fallback bila RTSP tidak tersedia: uji coba di ruang meeting memakai webcam Mac (`--webcam 0`) atau rekaman video (`--video`).

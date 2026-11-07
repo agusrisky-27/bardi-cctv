@@ -94,6 +94,12 @@ def parse_args() -> argparse.Namespace:
         help="Path to zones YAML (overrides analytics.zones_path)",
     )
     parser.add_argument(
+        "--web",
+        action="store_true",
+        help="Serve the dashboard (live video + stats) at http://127.0.0.1:PORT",
+    )
+    parser.add_argument("--port", type=int, default=8000, help="Dashboard port (with --web)")
+    parser.add_argument(
         "--loop",
         action="store_true",
         help="Loop video file continuously",
@@ -137,8 +143,17 @@ def main() -> int:
     if args.conf is not None:
         config.detection.confidence_threshold = args.conf
 
+    live = None
+    if args.web:
+        from rcis.web import LiveState, create_app, start_server, web_password
+
+        live = LiveState()
+        password = web_password()
+        app = create_app(config.analytics.db_path, live, config.analytics.exports_dir, password)
+        start_server(app, args.port, password)
+
     # Instantiate and run pipeline
-    pipeline = VideoAnalyticsPipeline(config=config)
+    pipeline = VideoAnalyticsPipeline(config=config, live=live)
     summary = pipeline.run(
         display=args.display,
         output_path=args.output,

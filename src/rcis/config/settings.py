@@ -92,6 +92,33 @@ class AnalyticsConfig(BaseModel):
     table_merge_gap_seconds: float = Field(default=20.0, ge=0.0)  # tolerate ID switches at a table
     heatmap_scale: float = Field(default=0.25, gt=0.0, le=1.0)
     heatmap_save_every_seconds: float = Field(default=60.0, gt=0.0)
+    staff_min_tables: int = Field(default=3, ge=1)  # visits this many tables = staff, not customer
+    staff_waiter_hits: int = Field(default=2, ge=1)  # waiter-detector overlaps before a track is staff
+    food_confirm_seconds: float = Field(default=3.0, ge=0.0)  # plate must stay this long in a table zone
+    # Laptop use (COCO class 63, no training needed). -1 disables the feature.
+    laptop_class_id: int = Field(default=63, ge=-1)
+    laptop_min_seconds: float = Field(default=5.0, ge=0.0)  # shorter sessions are ignored
+    laptop_gap_seconds: float = Field(default=5.0, ge=0.0)  # tolerate missed laptop detections
+    laptop_near_margin: float = Field(default=0.3, ge=0.0)  # expand person box by this fraction to find "their" laptop
+    # DB backup to a cloud-synced folder (RCIS_BACKUP_DIR in .env, default data/backups). 0 = only at shutdown.
+    backup_every_hours: float = Field(default=1.0, ge=0.0)
+
+
+class ModelsConfig(BaseModel):
+    """Optional Colab-trained weights. A missing file disables that feature (no crash)."""
+
+    restaurant_path: str = "models/restaurant_detector.pt"
+    restaurant_conf: float = Field(default=0.35, ge=0.0, le=1.0)
+    restaurant_every_n: int = Field(default=3, ge=1)  # run every Nth processed frame
+    food_classes: List[str] = Field(default_factory=lambda: ["plate_food"])
+    waiter_classes: List[str] = Field(default_factory=lambda: ["waiter"])
+    gender_path: str = "models/gender_classifier.pt"
+    gender_input_size: int = Field(default=96, ge=32)
+    gender_every_n: int = Field(default=3, ge=1)  # classify each track every Nth processed frame
+    gender_min_height_ratio: float = Field(default=0.25, ge=0.0, le=1.0)  # bbox height / frame height
+    gender_min_votes: int = Field(default=5, ge=1)
+    gender_min_confidence: float = Field(default=0.65, ge=0.0, le=1.0)
+    gender_max_history: int = Field(default=30, ge=1)
 
 
 class AppConfig(BaseModel):
@@ -100,6 +127,7 @@ class AppConfig(BaseModel):
     tracking: TrackingConfig = Field(default_factory=TrackingConfig)
     visualization: VisualizationConfig = Field(default_factory=VisualizationConfig)
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig)
+    models: ModelsConfig = Field(default_factory=ModelsConfig)
 
     @classmethod
     def load(
@@ -129,7 +157,7 @@ class AppConfig(BaseModel):
                 try:
                     with open(d_path, "r", encoding="utf-8") as f:
                         data = yaml.safe_load(f) or {}
-                        for section in ("detection", "tracking", "visualization", "analytics"):
+                        for section in ("detection", "tracking", "visualization", "analytics", "models"):
                             if section in data:
                                 config_data[section] = data[section]
                 except Exception as e:

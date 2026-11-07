@@ -29,6 +29,7 @@ class FileVideoSource(BaseVideoSource):
     ) -> None:
         self.file_path = Path(file_path)
         self.loop = loop
+        self._loop_offset_sec = 0.0  # keeps timestamps increasing across loops
         self.start_frame = max(0, start_frame)
         self._cap: Optional[cv2.VideoCapture] = None
         self._current_frame_index = 0
@@ -83,6 +84,7 @@ class FileVideoSource(BaseVideoSource):
         if not success or frame is None:
             if self.loop:
                 logger.info("Looping video source: %s", self.file_path.name)
+                self._loop_offset_sec += self._current_frame_index / (self.metadata.fps or 25.0)
                 self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 self._current_frame_index = 0
                 success, frame = self._cap.read()
@@ -93,7 +95,7 @@ class FileVideoSource(BaseVideoSource):
                 return None
 
         fps = self.metadata.fps if self._cached_metadata else 25.0
-        timestamp_sec = self._current_frame_index / fps
+        timestamp_sec = self._loop_offset_sec + self._current_frame_index / fps
 
         frame_data = FrameData(
             frame_index=self._current_frame_index,

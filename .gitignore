@@ -73,3 +73,4 @@ Thumbs.db
 data/*.db
 data/exports/heatmap.*
 configs/zones.yaml
+data/backups/

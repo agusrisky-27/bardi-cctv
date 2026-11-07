@@ -59,6 +59,43 @@ Semua threshold (duduk, dwell, timeout, stride) ada di bagian `analytics:` pada 
 > Tidak ada pengenalan wajah. Tidak ada data identitas yang disimpan.
 > Pertanyaan: hubungi pengelola.
 
+### Fase 2 — Training di Google Colab (kamu jalankan sendiri)
+
+> Training **tidak pernah** dijalankan di Mac. Dataset didownload Colab langsung dari internet Google, jadi kecepatan Wi-Fi tidak berpengaruh ke proses training; yang melewati Wi-Fi kamu hanya download `.pt` hasilnya (puluhan MB).
+
+1. Buka [colab.research.google.com](https://colab.research.google.com) → File → Upload notebook → pilih salah satu:
+   - `colab/train_restaurant_detector.ipynb` (waiter + plate_food; butuh API key Roboflow gratis)
+   - `colab/train_gender_classifier.ipynb` (PA-100K; tanpa API key)
+2. Runtime → Change runtime type → **T4 GPU** → Run all. Jika terputus, Run all lagi: training lanjut dari checkpoint di Drive.
+3. Hasil ada di `MyDrive/cctv_resto/models/`. Download `restaurant_detector.pt` dan `gender_classifier.pt`, taruh di folder `models/` project ini.
+4. Jalankan seperti biasa. Fitur aktif otomatis jika file ada; jika tidak ada, fitur itu dilewati dengan pesan peringatan.
+
+Ringkasan dataset dan lisensi: [docs/DATASETS.md](docs/DATASETS.md).
+
+### Fase 3 — Memakai model hasil Colab
+
+| Fitur | Bobot | Cara kerja |
+|---|---|---|
+| Waktu tunggu makanan | `models/restaurant_detector.pt` | Piring (`plate_food`) yang bertahan > 3 detik di zona meja yang sedang diduduki → `table_sessions.wait_seconds`. Piring yang sudah ada sebelum orang duduk tidak dihitung |
+| Pelayan vs pelanggan | idem (`waiter`) atau zona `kind: staff` atau heuristik | Track yang tumpang tindih dengan deteksi pelayan, masuk zona staf, atau berpindah ≥ 3 meja ditandai `role = staff` dan tidak masuk statistik |
+| Gender | `models/gender_classifier.pt` | Crop badan hanya di memori, voting ≥ 5 frame, `unknown` jika confidence < 0.65 atau orang terlalu kecil. Hanya label agregat yang disimpan |
+
+Coba waktu tunggu makanan **sebelum** training dengan model COCO: lihat blok komentar `models:` di `configs/detection.yaml`.
+
+### Dashboard web (lokal, tanpa hosting)
+
+```bash
+pip install -r requirements.txt          # sekali saja (fastapi, uvicorn)
+python -m rcis.cli --rtsp --web          # analitik + dashboard: buka http://127.0.0.1:8000
+python -m rcis.web                       # hanya riwayat (tanpa video live), pipeline tidak perlu jalan
+```
+
+Isi dashboard: video live dengan kotak tracker, jumlah orang saat ini, pengunjung per jam/hari, laki-laki/perempuan (estimasi), arah datang, rata-rata lama di ruangan, area paling lama ditempati, durasi pakai laptop per orang, heatmap. Rentang: hari ini, kemarin, 7 hari, 30 hari.
+
+- **Buka dari HP:** isi `RCIS_WEB_PASSWORD` di `.env`, jalankan ulang, lalu buka `http://<IP-Mac>:8000` dari HP yang satu Wi-Fi (username bebas, password sesuai `.env`). Tanpa password, dashboard hanya bisa dibuka dari Mac ini.
+- Video live **tidak direkam**. Statistik dibaca dari `data/rcis.db` (read-only).
+- **Pakai laptop** = orang diam dengan laptop (class COCO `laptop`, tanpa training) di depannya ≥ 5 detik. Sistem tidak bisa tahu ke mana mata melihat.
+
 ---
 
 ## 1. Architectural Highlights

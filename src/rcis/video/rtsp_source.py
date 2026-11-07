@@ -82,8 +82,16 @@ class RTSPSource(BaseVideoSource):
         if not self.rtsp_url:
             logger.error("RTSP URL is empty or unconfigured.")
             return False
-        if not self._connect():
-            return False
+        # Camera may still be booting / reconnecting to Wi-Fi: retry with the same backoff as the grabber
+        attempt = 0
+        while not self._connect():
+            attempt += 1
+            if self.max_reconnect_attempts > 0 and attempt >= self.max_reconnect_attempts:
+                return False
+            delay = min(self.reconnect_delay_sec * 2 ** (attempt - 1), 60)
+            logger.warning("Camera not reachable (is it online in the BARDI app? same Wi-Fi? IP changed?). "
+                           "Retry %d in %ds...", attempt, delay)
+            time.sleep(delay)
         self._start_time = time.time()
         self._current_frame_index = 0
         self._stop.clear()

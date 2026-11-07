@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 import logging
 from pathlib import Path
+import shutil
 import sqlite3
 from typing import Optional
 
@@ -25,7 +26,8 @@ CREATE TABLE IF NOT EXISTS visits (
     entry_side TEXT,
     gender_est TEXT,
     gender_conf REAL,
-    total_seconds REAL
+    total_seconds REAL,
+    role TEXT NOT NULL DEFAULT 'customer'  -- customer / staff (waiter)
 );
 CREATE TABLE IF NOT EXISTS zone_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,9 +60,22 @@ CREATE TABLE IF NOT EXISTS line_crossings (
     entry_side TEXT,                  -- kiri / kanan / depan (asal lintasan)
     crossed_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS activity_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    track_id INTEGER NOT NULL,
+    activity TEXT NOT NULL,           -- e.g. 'laptop' (sitting in front of a laptop)
+    start_at TEXT NOT NULL,
+    end_at TEXT NOT NULL,
+    seconds REAL NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_visits_entered ON visits(entered_at);
+CREATE INDEX IF NOT EXISTS idx_activity_start ON activity_events(start_at);
 CREATE INDEX IF NOT EXISTS idx_zone_events_zone ON zone_events(zone_name);
 
+"""
+
+
+VIEW = """
 -- hourly_stats is a view so it never drifts from the raw anonymous rows.
 DROP VIEW IF EXISTS hourly_stats;
 CREATE VIEW hourly_stats AS
@@ -74,7 +89,7 @@ FROM (
            IFNULL(SUM(gender_est = 'female'), 0) AS female,
            SUM(gender_est IS NULL OR gender_est NOT IN ('male', 'female')) AS unknown,
            AVG(total_seconds) AS avg_dwell
-    FROM visits GROUP BY hour
+    FROM visits WHERE role = 'customer' GROUP BY hour
 ) v
 LEFT JOIN (
     SELECT strftime('%Y-%m-%d %H:00', seated_at) AS hour, AVG(wait_seconds) AS avg_food_wait
@@ -95,7 +110,12 @@ class Storage:
         if str(db_path) != ":memory:":
             path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        self.conn.execute("PRAGMA journal_mode=WAL")  # dashboard can read while the pipeline writes
         self.conn.executescript(SCHEMA)
+        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(visits)")}
+        if "role" not in cols:  # DB created before the role column existed
+            self.conn.execute("ALTER TABLE visits ADD COLUMN role TEXT NOT NULL DEFAULT 'customer'")
+        self.conn.executescript(VIEW)
         self.conn.commit()
 
     def _insert(self, sql: str, params: tuple) -> int:
@@ -111,12 +131,13 @@ class Storage:
         entry_side: Optional[str],
         gender_est: Optional[str] = None,
         gender_conf: Optional[float] = None,
+        role: str = "customer",
     ) -> int:
         return self._insert(
-            "INSERT INTO visits (track_id, entered_at, exited_at, entry_side, gender_est, gender_conf, total_seconds)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO visits (track_id, entered_at, exited_at, entry_side, gender_est, gender_conf, total_seconds, role)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (track_id, _iso(entered_at), _iso(exited_at), entry_side, gender_est, gender_conf,
-             round(exited_at - entered_at, 2)),
+             round(exited_at - entered_at, 2), role),
         )
 
     def add_zone_event(self, track_id: int, zone_name: str, enter_at: float, exit_at: float, is_sitting: bool) -> int:
@@ -129,6 +150,12 @@ class Storage:
         return self._insert(
             "INSERT INTO line_crossings (track_id, direction, entry_side, crossed_at) VALUES (?, ?, ?, ?)",
             (track_id, direction, entry_side, _iso(crossed_at)),
+        )
+
+    def add_activity(self, track_id: int, activity: str, start_at: float, end_at: float) -> int:
+        return self._insert(
+            "INSERT INTO activity_events (track_id, activity, start_at, end_at, seconds) VALUES (?, ?, ?, ?, ?)",
+            (track_id, activity, _iso(start_at), _iso(end_at), round(end_at - start_at, 2)),
         )
 
     def open_table_session(self, table_zone: str, seated_at: float) -> int:
@@ -149,6 +176,21 @@ class Storage:
             (_iso(arrived_at), _iso(arrived_at), session_id),
         )
         self.conn.commit()
+
+    def backup(self, dest_dir: str | Path, keep_days: int = 14) -> Path:
+        """Consistent online copy (safe while writing): one file per day + rcis_latest.db; older dailies deleted."""
+        dest = Path(dest_dir).expanduser()
+        dest.mkdir(parents=True, exist_ok=True)
+        daily = dest / f"rcis_{datetime.now():%Y-%m-%d}.db"
+        out = sqlite3.connect(str(daily))
+        try:
+            self.conn.backup(out)
+        finally:
+            out.close()
+        shutil.copy2(daily, dest / "rcis_latest.db")
+        for old in sorted(dest.glob("rcis_????-??-??.db"))[:-keep_days]:  # names sort by date
+            old.unlink()
+        return daily
 
     def close(self) -> None:
         self.conn.close()

@@ -13,7 +13,7 @@ from collections import deque
 from dataclasses import dataclass, field
 import logging
 from pathlib import Path
-from typing import Deque, Dict, List, Optional, Set, Tuple
+from typing import Callable, Deque, Dict, List, Optional, Set, Tuple
 
 import cv2
 import numpy as np
@@ -55,6 +55,11 @@ class TrackState:
     sat_in: Set[str] = field(default_factory=set)
     still_since: Optional[float] = None
     sitting: bool = False
+    waiter_hits: int = 0
+    tables_visited: Set[str] = field(default_factory=set)
+    is_staff: bool = False  # sticky: waiter detector, staff zone, or walks between many tables
+    laptop_start: Optional[float] = None
+    laptop_last: Optional[float] = None
 
 
 def load_zones(path: str | Path, frame_w: int, frame_h: int) -> Tuple[List[Zone], Optional[sv.LineZone]]:
@@ -105,6 +110,11 @@ class RestaurantAnalytics:
         self._bg_samples: List[np.ndarray] = []
         self._last_bg_t: Optional[float] = None
         self._last_save_t: Optional[float] = None
+        # track_id -> (gender label, confidence); wired to GenderVoter.pop by the pipeline
+        self.gender_lookup: Optional[Callable[[int], Tuple[Optional[str], Optional[float]]]] = None
+        self._food_seen: Dict[str, float] = {}
+        self._last_laptops = np.empty((0, 4))
+        self._last_food = np.empty((0, 4))
 
     # ------------------------------------------------------------------ update
     def _edge_side(self, x: float, y: float) -> str:
@@ -112,8 +122,23 @@ class RestaurantAnalytics:
         dist = {"kiri": x / self.w, "kanan": 1 - x / self.w, "depan": 1 - y / self.h, "belakang": y / self.h}
         return min(dist, key=dist.get)
 
-    def update(self, detections: sv.Detections, t: float, frame: Optional[np.ndarray] = None) -> None:
+    def update(
+        self,
+        detections: sv.Detections,
+        t: float,
+        frame: Optional[np.ndarray] = None,
+        food: Optional[sv.Detections] = None,
+        waiters: Optional[sv.Detections] = None,
+        laptops: Optional[sv.Detections] = None,
+    ) -> None:
+        """food / waiters are None on frames where the restaurant detector did not run."""
+        if laptops is not None:
+            self._last_laptops = laptops.xyxy
         if len(detections) and detections.tracker_id is not None:
+            near_laptop = self._near_laptop(detections.xyxy, laptops)
+            waiter_hit = np.zeros(len(detections), dtype=bool)
+            if waiters is not None and len(waiters):
+                waiter_hit = sv.box_iou_batch(detections.xyxy, waiters.xyxy).max(axis=1) > 0.4
             feet = detections.get_anchors_coordinates(ANCHOR)
             inside = {z.name: z.detector.trigger(detections) for z in self.zones}
             crossed_in, crossed_out = (
@@ -129,6 +154,14 @@ class RestaurantAnalytics:
                 st.history.append((t, x, y))
                 self._update_motion(st, t)
                 self._update_zones(tid, st, {n: bool(m[i]) for n, m in inside.items()}, t)
+                st.waiter_hits += int(waiter_hit[i])
+                self._update_laptop(tid, st, bool(near_laptop[i]) and st.still_since is not None, t)
+                st.is_staff = (
+                    st.is_staff
+                    or st.waiter_hits >= self.cfg.staff_waiter_hits
+                    or len(st.tables_visited) >= self.cfg.staff_min_tables
+                    or any(z.kind == "staff" and z.name in st.zones for z in self.zones)
+                )
                 self._add_heat(x, y)
                 if crossed_in is not None and crossed_in[i]:
                     self.count_in += 1
@@ -139,6 +172,7 @@ class RestaurantAnalytics:
 
         self._expire(t)
         self._update_tables(t)
+        self._update_food(t, food)
         if frame is not None:
             self._sample_background(frame, t)
         if self._last_save_t is None or t - self._last_save_t >= self.cfg.heatmap_save_every_seconds:
@@ -163,15 +197,59 @@ class RestaurantAnalytics:
         for z in self.zones:
             if inside[z.name] and z.name not in st.zones:
                 st.zones[z.name] = t
+                if z.kind == "table":
+                    st.tables_visited.add(z.name)
             elif not inside[z.name] and z.name in st.zones:
                 self._close_zone(tid, st, z.name, t)
         st.sitting = (
-            st.still_since is not None
+            not st.is_staff
+            and st.still_since is not None
             and t - st.still_since >= self.cfg.sitting_min_seconds
             and any(z.kind == "table" and z.name in st.zones for z in self.zones)
         )
         if st.sitting:
             st.sat_in.update(z.name for z in self.zones if z.kind == "table" and z.name in st.zones)
+
+    def _near_laptop(self, persons: np.ndarray, laptops: Optional[sv.Detections]) -> np.ndarray:
+        """Laptop center inside the person box expanded by laptop_near_margin (a laptop on the desk in front)."""
+        near = np.zeros(len(persons), dtype=bool)
+        if laptops is None or len(laptops) == 0:
+            return near
+        cx = (laptops.xyxy[:, 0] + laptops.xyxy[:, 2]) / 2
+        cy = (laptops.xyxy[:, 1] + laptops.xyxy[:, 3]) / 2
+        m = self.cfg.laptop_near_margin
+        for i, (x1, y1, x2, y2) in enumerate(persons):
+            dx, dy = (x2 - x1) * m, (y2 - y1) * m
+            near[i] = bool(np.any((cx >= x1 - dx) & (cx <= x2 + dx) & (cy >= y1 - dy) & (cy <= y2 + dy)))
+        return near
+
+    def _update_laptop(self, tid: int, st: TrackState, using: bool, t: float) -> None:
+        """Still person + laptop in front = laptop session; short detection gaps are tolerated."""
+        if using:
+            if st.laptop_start is None:
+                st.laptop_start = t
+            st.laptop_last = t
+        elif st.laptop_start is not None and t - st.laptop_last > self.cfg.laptop_gap_seconds:
+            self._close_laptop(tid, st)
+
+    def _close_laptop(self, tid: int, st: TrackState) -> None:
+        if st.laptop_start is not None and st.laptop_last - st.laptop_start >= self.cfg.laptop_min_seconds:
+            self._store("add_activity", tid, "laptop", st.laptop_start, st.laptop_last)
+        st.laptop_start = st.laptop_last = None
+
+    def _laptop_active(self, st: TrackState) -> bool:
+        return st.laptop_start is not None and st.laptop_last - st.laptop_start >= self.cfg.laptop_min_seconds
+
+    def live_summary(self) -> dict:
+        """Current state for the web dashboard (people now, door counts, zone occupancy, laptop users)."""
+        return {
+            "people_now": len(self.tracks),
+            "count_in": self.count_in,
+            "count_out": self.count_out,
+            "laptop_now": sum(1 for st in self.tracks.values() if self._laptop_active(st)),
+            "sitting_now": sum(1 for st in self.tracks.values() if st.sitting),
+            "zones": {z.name: sum(1 for st in self.tracks.values() if z.name in st.zones) for z in self.zones},
+        }
 
     def _close_zone(self, tid: int, st: TrackState, name: str, t: float) -> None:
         enter_t = st.zones.pop(name)
@@ -189,11 +267,40 @@ class RestaurantAnalytics:
                 if sess is None:
                     seated_at = min(st.still_since for st in sitters)
                     sid = self._store("open_table_session", z.name, seated_at)
-                    self.table_sessions[z.name] = {"id": sid, "seated_at": seated_at, "last_occupied": t}
+                    # food_blocked=None: decided on the first food-detection round (plate already there?)
+                    self.table_sessions[z.name] = {
+                        "id": sid, "seated_at": seated_at, "last_occupied": t, "food_blocked": None, "food_done": False,
+                    }
                 else:
                     sess["last_occupied"] = t
             elif sess is not None and t - sess["last_occupied"] > self.cfg.table_merge_gap_seconds:
                 self._close_table(z.name)
+
+    def _update_food(self, t: float, food: Optional[sv.Detections]) -> None:
+        """First plate/food that stays in a seated table's zone sets food_arrived_at (-> wait_seconds)."""
+        if food is None:
+            return
+        self._last_food = food.xyxy
+        centers = [((x1 + x2) / 2, (y1 + y2) / 2) for x1, y1, x2, y2 in food.xyxy]
+        for z in self.zones:
+            sess = self.table_sessions.get(z.name) if z.kind == "table" else None
+            if sess is None or sess["food_done"]:
+                self._food_seen.pop(z.name, None)
+                continue
+            poly = z.polygon.astype(np.float32)
+            present = any(cv2.pointPolygonTest(poly, (float(cx), float(cy)), False) >= 0 for cx, cy in centers)
+            if sess["food_blocked"] is None:
+                sess["food_blocked"] = present  # a plate already on the table before seating does not count
+            if not present:
+                sess["food_blocked"] = False
+                self._food_seen.pop(z.name, None)
+            elif not sess["food_blocked"]:
+                first = self._food_seen.setdefault(z.name, t)
+                if t - first >= self.cfg.food_confirm_seconds:
+                    sess["food_done"] = True
+                    self._food_seen.pop(z.name, None)
+                    if sess["id"] is not None:
+                        self._store("set_food_arrived", sess["id"], t)
 
     def _close_table(self, name: str) -> None:
         sess = self.table_sessions.pop(name)
@@ -206,8 +313,13 @@ class RestaurantAnalytics:
                 continue
             for name in list(st.zones):
                 self._close_zone(tid, st, name, st.last_t)
+            self._close_laptop(tid, st)
+            gender, conf = self.gender_lookup(tid) if self.gender_lookup else (None, None)  # also frees memory
             if st.last_t - st.first_t >= self.cfg.min_visit_seconds:
-                self._store("add_visit", tid, st.first_t, st.last_t, st.entry_side)
+                role = "staff" if st.is_staff else "customer"
+                if st.is_staff:
+                    gender, conf = None, None  # gender stats are for customers only
+                self._store("add_visit", tid, st.first_t, st.last_t, st.entry_side, gender, conf, role)
             del self.tracks[tid]
 
     def _store(self, method: str, *args):
@@ -263,6 +375,12 @@ class RestaurantAnalytics:
             x, y = z.polygon.min(axis=0)
             cv2.putText(frame, f"{z.name}: {occupancy}", (int(x) + 4, int(y) + 18),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        for x1, y1, x2, y2 in self._last_laptops:
+            cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (255, 200, 0), 2)
+            cv2.putText(frame, "laptop", (int(x1), int(y1) - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 200, 0), 1)
+        for x1, y1, x2, y2 in self._last_food:
+            cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 165, 255), 2)
+            cv2.putText(frame, "makanan", (int(x1), int(y1) - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 165, 255), 1)
         if self.door_line is not None:
             s, e = self.door_line.vector.start, self.door_line.vector.end
             cv2.line(frame, (int(s.x), int(s.y)), (int(e.x), int(e.y)), (0, 255, 255), 2)
@@ -272,7 +390,10 @@ class RestaurantAnalytics:
             feet = detections.get_anchors_coordinates(ANCHOR)
             for (x, y), tid in zip(feet, detections.tracker_id):
                 st = self.tracks.get(int(tid))
-                if st is not None and st.sitting:
-                    cv2.putText(frame, "duduk", (int(x) - 20, int(y) + 16),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (80, 200, 80), 2)
+                if st is None:
+                    continue
+                tags = [n for n, on in (("staf", st.is_staff), ("duduk", st.sitting), ("laptop", self._laptop_active(st))) if on]
+                if tags:
+                    cv2.putText(frame, "+".join(tags), (int(x) - 20, int(y) + 16),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 120, 255) if st.is_staff else (80, 200, 80), 2)
         return frame

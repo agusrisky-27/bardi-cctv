@@ -21,15 +21,21 @@ dependencies = [
     "pydantic>=2.7.0",
     "pyyaml>=6.0.1",
     "psutil>=5.9.0",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
+    "httpx>=0.27.0",
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"rcis.web" = ["index.html"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"

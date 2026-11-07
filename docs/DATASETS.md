@@ -7,11 +7,13 @@ Status "terverifikasi" berarti saya membaca sendiri metadata resminya; selain it
 
 | Dataset | Dipakai untuk | Lisensi | Status |
 |---|---|---|---|
-| [PA-100K gender split (Figshare)](https://figshare.com/articles/dataset/Gender_classification_of_PA-100K_dataset_a_Pedestrian_Attribute_dataset/12763712) | `colab/train_gender_classifier.ipynb` | Figshare mencantumkan **CC0**. Data asalnya PA-100K (Liu dkk., HydraPlus-Net); syarat penggunaan penulis asli belum saya cek | Lisensi Figshare terverifikasi (API, 2026-11-07). Gambar 75x75 px, 1 file `data.zip` 89,7 MB. Pada 2026-11-07 server unduhan Figshare mengembalikan HTTP 504 (struktur zip belum sempat saya lihat); notebook punya retry + opsi upload manual ke Drive |
-| [Ramada (waiter, food)](https://universe.roboflow.com/akash-tt3fk/ramada-bytez) | `colab/train_restaurant_detector.ipynb` | Belum diketahui | **Belum terverifikasi** (Roboflow memblokir pembacaan otomatis, HTTP 403) |
-| [Restaurant Tables](https://universe.roboflow.com/insper-erh3j/restaurant-tables-ymr9k) | idem | Belum diketahui | Belum terverifikasi |
-| [Plate & food](https://universe.roboflow.com/ktu/plate-food) | idem | Belum diketahui | Belum terverifikasi |
-| [Food detection](https://universe.roboflow.com/restaurant-monitoring-system/food_detection-kuscy) | idem | Belum diketahui | Belum terverifikasi |
+| [PA-100K gender split](https://data.4tu.nl/datasets/a6c8b6dd-0df6-4de8-806b-e745074d10a8) (4TU.ResearchData; mirror [Figshare](https://figshare.com/articles/dataset/Gender_classification_of_PA-100K_dataset_a_Pedestrian_Attribute_dataset/12763712)) | `colab/train_gender_classifier.ipynb` | Figshare mencantumkan **CC0**. Data asalnya PA-100K (Liu dkk., HydraPlus-Net); syarat penggunaan penulis asli belum saya cek | Lisensi Figshare terverifikasi (API, 2026-11-07). Gambar 75x75 px, 1 file `data.zip` 89,7 MB. Figshare HTTP 504 (2026-11-07), mirror 4TU berhasil: MD5 `cc2f2550…c81` cocok, 49.302 gambar, split bawaan train 39.797 / validation 5.009 / test 4.496 (folder `male`/`female`). Notebook memakai 4TU dulu, Figshare sebagai cadangan |
+| [Ramada (waiter, food)](https://universe.roboflow.com/akash-tt3fk/ramada-bytez) | `colab/train_restaurant_detector.ipynb` | **CC BY 4.0** (wajib mencantumkan sumber) | Terverifikasi via API (2026-11-07): 470 gambar (410/40/20), Food 3766, Waiter 934 |
+| [Restaurant Tables](https://universe.roboflow.com/insper-erh3j/restaurant-tables-ymr9k) | idem | **CC BY 4.0** | Terverifikasi via API: 1544 gambar (1082/310/152); dipakai: plate/bowl/tray of food (~2050), waiter 1001; class lain (table, people, QR code, cup, dll) dibuang |
+| ~~[Plate & food](https://universe.roboflow.com/ktu/plate-food)~~ | **tidak dipakai** | CC BY 4.0 | Hanya 37 gambar segmentasi; piring dan makanan dilabel terpisah (dobel) |
+| ~~[Food detection](https://universe.roboflow.com/restaurant-monitoring-system/food_detection-kuscy)~~ | **tidak dipakai** | - | HTTP 404 (dihapus atau privat) |
+
+**Cek ulang kapan saja:** `python scripts/check_datasets.py` (butuh `ROBOFLOW_API_KEY` di `.env`).
 
 **Cara cek lisensi Roboflow:** notebook detector membaca bagian `roboflow: license:` dari `data.yaml` tiap dataset yang diunduh, mencetaknya, dan menyimpannya ke `MyDrive/cctv_resto/models/DATASET_LICENSES.md`. Salin isinya ke tabel ini setelah training pertama.
 Lisensi Roboflow Universe bervariasi (CC BY 4.0, CC BY-NC, Public Domain, dll). Jika ada yang **NC / non-commercial**, bobot hasil training hanya boleh dipakai untuk riset/magang, bukan produk komersial.
@@ -23,8 +25,9 @@ Class dataset dipetakan otomatis (lewat kata kunci, dicetak di notebook supaya b
 | Class | Isi |
 |---|---|
 | `waiter` | waiter, waitress, staff, server |
-| `plate_food` | plate, food, dish, bowl, tray, meal (dan **semua** class dari dataset `plate-food` dan `food_detection`) |
-| `customer` | customer, person, people, guest, diner (opsional, orang sudah dideteksi model COCO) |
+| `plate_food` | plate, food, dish, bowl, tray, meal |
+
+Tidak ada class `customer`: dataset Ramada tidak melabeli pengunjung (akan merusak class itu), dan orang sudah dideteksi model COCO di Mac.
 
 Class yang tidak cocok dibuang. Jika hasil pemetaan di notebook salah, ubah `KEYWORDS` atau `DATASETS` di cell konfigurasi.
 

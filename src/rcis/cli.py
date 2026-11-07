@@ -149,7 +149,8 @@ def main() -> int:
 
         live = LiveState()
         password = web_password()
-        app = create_app(config.analytics.db_path, live, config.analytics.exports_dir, password)
+        app = create_app(config.analytics.db_path, live, config.analytics.exports_dir, password,
+                         config.security.alerts_dir)
         start_server(app, args.port, password)
 
     # Instantiate and run pipeline

@@ -74,3 +74,4 @@ data/*.db
 data/exports/heatmap.*
 configs/zones.yaml
 data/backups/
+data/alerts/

@@ -158,6 +158,12 @@ class Storage:
             (track_id, activity, _iso(start_at), _iso(end_at), round(end_at - start_at, 2)),
         )
 
+    def add_alert(self, alert_type: str, zone_name: Optional[str], created_at: float, snapshot: Optional[str]) -> int:
+        return self._insert(
+            "INSERT INTO alerts (type, zone_name, created_at, snapshot_path_blurred) VALUES (?, ?, ?, ?)",
+            (alert_type, zone_name, _iso(created_at), snapshot),
+        )
+
     def open_table_session(self, table_zone: str, seated_at: float) -> int:
         return self._insert(
             "INSERT INTO table_sessions (table_zone, seated_at) VALUES (?, ?)", (table_zone, _iso(seated_at))

@@ -121,6 +121,18 @@ class ModelsConfig(BaseModel):
     gender_max_history: int = Field(default=30, ge=1)
 
 
+class SecurityConfig(BaseModel):
+    """Alert rules. Telegram token/chat id come from .env (TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)."""
+
+    alerts_dir: str = "data/alerts"  # only face-blurred snapshots are ever written here
+    restricted_cooldown_seconds: float = Field(default=60.0, ge=0.0)
+    loiter_seconds: float = Field(default=600.0, gt=0.0)  # present this long without sitting/laptop = loitering
+    after_hours_cooldown_seconds: float = Field(default=600.0, ge=0.0)
+    open_hour: Optional[int] = Field(default=None, ge=0, le=23)  # None = after-hours alert off
+    close_hour: Optional[int] = Field(default=None, ge=0, le=23)
+    head_blur_fraction: float = Field(default=0.25, gt=0.0, le=1.0)  # top part of a person box that is blurred
+
+
 class AppConfig(BaseModel):
     camera: CameraConfig = Field(default_factory=CameraConfig)
     detection: DetectionConfig = Field(default_factory=DetectionConfig)
@@ -128,6 +140,7 @@ class AppConfig(BaseModel):
     visualization: VisualizationConfig = Field(default_factory=VisualizationConfig)
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig)
     models: ModelsConfig = Field(default_factory=ModelsConfig)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
 
     @classmethod
     def load(
@@ -157,7 +170,7 @@ class AppConfig(BaseModel):
                 try:
                     with open(d_path, "r", encoding="utf-8") as f:
                         data = yaml.safe_load(f) or {}
-                        for section in ("detection", "tracking", "visualization", "analytics", "models"):
+                        for section in ("detection", "tracking", "visualization", "analytics", "models", "security"):
                             if section in data:
                                 config_data[section] = data[section]
                 except Exception as e:

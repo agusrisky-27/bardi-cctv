@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 import logging
 import os
 from pathlib import Path
+import re
 import secrets
 import sqlite3
 import threading
@@ -56,10 +57,10 @@ def _range_bounds(name: str, now: datetime) -> tuple[str, str, str]:
     """Return (start_iso, end_iso, bucket) where bucket is 'hour' or 'day'."""
     midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
     start, end, bucket = {
-        "today": (midnight, now, "hour"),
+        "today": (midnight, midnight + timedelta(days=1), "hour"),  # end = tomorrow 00:00, so events from this very second count
         "yesterday": (midnight - timedelta(days=1), midnight, "hour"),
-        "7d": (midnight - timedelta(days=6), now, "day"),
-        "30d": (midnight - timedelta(days=29), now, "day"),
+        "7d": (midnight - timedelta(days=6), midnight + timedelta(days=1), "day"),
+        "30d": (midnight - timedelta(days=29), midnight + timedelta(days=1), "day"),
     }[name]
     fmt = "%Y-%m-%dT%H:%M:%S"
     return start.strftime(fmt), end.strftime(fmt), bucket
@@ -108,13 +109,19 @@ def query_stats(conn: sqlite3.Connection, range_name: str, now: Optional[datetim
             "per_person": [{"track_id": t, "first_at": f, "seconds": round(s, 1), "sessions": n}
                            for t, f, s, n in laptop],
         },
+        "alerts": [
+            {"type": t, "zone": z, "at": at, "snapshot": Path(p).name if p else None}
+            for t, z, at, p in q("SELECT type, zone_name, created_at, snapshot_path_blurred FROM alerts"
+                                 " WHERE created_at >= ? AND created_at < ? ORDER BY created_at DESC LIMIT 50")
+        ],
         "avg_food_wait_seconds": q("SELECT AVG(wait_seconds) FROM table_sessions"
                                    " WHERE seated_at >= ? AND seated_at < ?")[0][0],
     }
 
 
 def create_app(db_path: str | Path, live: Optional[LiveState] = None,
-               exports_dir: str | Path = "data/exports", password: Optional[str] = None) -> FastAPI:
+               exports_dir: str | Path = "data/exports", password: Optional[str] = None,
+               alerts_dir: str | Path = "data/alerts") -> FastAPI:
     app = FastAPI(title="RCIS Dashboard", docs_url=None, redoc_url=None)
     basic = HTTPBasic(auto_error=password is not None)
 
@@ -152,6 +159,14 @@ def create_app(db_path: str | Path, live: Optional[LiveState] = None,
         path = Path(exports_dir) / "heatmap.png"
         if not path.exists():
             raise HTTPException(404, "Heatmap belum ada")
+        return FileResponse(path, headers={"Cache-Control": "no-store"})
+
+    @app.get("/alert-snapshot/{name}", dependencies=[Depends(auth)])
+    def alert_snapshot(name: str) -> FileResponse:
+        path = Path(alerts_dir) / name
+        # strict file-name check: no path separators, only our own face-blurred .jpg files
+        if not re.fullmatch(r"[A-Za-z0-9_\-]+\.jpg", name) or not path.is_file():
+            raise HTTPException(404, "Foto tidak ditemukan")
         return FileResponse(path, headers={"Cache-Control": "no-store"})
 
     @app.get("/video", dependencies=[Depends(auth)])

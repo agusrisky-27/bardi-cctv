@@ -15,8 +15,9 @@ parser.add_argument("--port", type=int, default=8000)
 parser.add_argument("--detection-config", default="configs/detection.yaml")
 args = parser.parse_args()
 
-cfg = AppConfig.load(detection_config_path=args.detection_config).analytics
+app_cfg = AppConfig.load(detection_config_path=args.detection_config)
+cfg, sec = app_cfg.analytics, app_cfg.security
 pw = web_password()
 host = "0.0.0.0" if pw else "127.0.0.1"
 print(f"Dashboard: http://{'<IP-Mac>' if pw else '127.0.0.1'}:{args.port}  (Ctrl+C untuk berhenti)")
-uvicorn.run(create_app(cfg.db_path, None, cfg.exports_dir, pw), host=host, port=args.port, log_level="warning")
+uvicorn.run(create_app(cfg.db_path, None, cfg.exports_dir, pw, sec.alerts_dir), host=host, port=args.port, log_level="warning")

@@ -74,3 +74,13 @@ models:
   gender_min_votes: 5                  # need >= 5 frames of votes, else "unknown"
   gender_min_confidence: 0.65          # mean probability below this -> "unknown"
   gender_max_history: 30
+
+# Security alerts (Telegram token & chat id live in .env, never here).
+security:
+  alerts_dir: "data/alerts"            # face-blurred snapshots only
+  restricted_cooldown_seconds: 60      # re-alert for the same restricted zone at most once per minute
+  loiter_seconds: 600                  # 10 min present without sitting at a table / using a laptop
+  after_hours_cooldown_seconds: 600
+  open_hour: null                      # e.g. 8  -> alert when people are seen outside 08:00-22:00
+  close_hour: null                     # e.g. 22    (null = after-hours alert off)
+  head_blur_fraction: 0.25             # top 25% of each person box is blurred in snapshots

@@ -19,6 +19,7 @@ from rcis.detection.base import BaseDetector
 from rcis.detection.yolo_detector import YOLODetector
 from rcis.gender import GenderVoter
 from rcis.restaurant import RestaurantDetector
+from rcis.security import Security
 from rcis.storage import Storage
 from rcis.tracking.base import BaseTracker
 from rcis.tracking.byte_tracker import ByteTrackTracker
@@ -65,6 +66,7 @@ class VideoAnalyticsPipeline:
         self.restaurant = RestaurantDetector(self.config.models, self.detector.device, self.config.detection.input_size)
         self.gender = GenderVoter(self.config.models, self.detector.device)
         self._processed = 0
+        self.security: Optional[Security] = None  # created with analytics (needs the DB)
         self._last_backup = time.time()
         self.backup_dir = os.environ.get("RCIS_BACKUP_DIR") or "data/backups"
         self.live = live  # web dashboard state (latest JPEG + counters), None = no web
@@ -88,14 +90,16 @@ class VideoAnalyticsPipeline:
             logger.warning("Unknown frame size; analytics disabled.")
             return None
         zones_path = Path(cfg.zones_path)
-        if not zones_path.exists():
-            zones_path = Path("configs/zones.example.yaml")
-            logger.warning("%s not found, using %s. Draw real zones with scripts/draw_zones.py",
-                           cfg.zones_path, zones_path)
-        zones, line = load_zones(zones_path, meta.width, meta.height) if zones_path.exists() else ([], None)
+        if zones_path.exists():
+            zones, line = load_zones(zones_path, meta.width, meta.height)
+        else:  # no example zones: they belong to another room and only confuse
+            zones, line = [], None
+            logger.warning("%s not found: running without zones / door line. Draw them with scripts/draw_zones.py",
+                           cfg.zones_path)
         logger.info("Analytics: %d zones, door line: %s, DB: %s", len(zones), line is not None, cfg.db_path)
         analytics = RestaurantAnalytics(cfg, (meta.width, meta.height), zones, line, Storage(cfg.db_path))
         analytics.gender_lookup = self.gender.pop
+        self.security = Security(self.config.security, analytics.storage)
         return analytics
 
     def process_frame(
@@ -137,7 +141,10 @@ class VideoAnalyticsPipeline:
             frame_idx=frame_data.frame_index,
         )
         if self.analytics is not None:
-            self.analytics.update(tracked_detections, self._t0 + frame_data.timestamp_sec, frame, food, waiters, laptops)
+            t_now = self._t0 + frame_data.timestamp_sec
+            self.analytics.update(tracked_detections, t_now, frame, food, waiters, laptops)
+            if self.security is not None:
+                self.security.check(frame, tracked_detections, self.analytics, t_now)
             self.analytics.draw(annotated_frame, tracked_detections)
         vis_ms = (time.perf_counter() - t_vis_start) * 1000.0
 

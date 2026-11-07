@@ -96,6 +96,24 @@ Isi dashboard: video live dengan kotak tracker, jumlah orang saat ini, pengunjun
 - Video live **tidak direkam**. Statistik dibaca dari `data/rcis.db` (read-only).
 - **Pakai laptop** = orang diam dengan laptop (class COCO `laptop`, tanpa training) di depannya ≥ 5 detik. Sistem tidak bisa tahu ke mana mata melihat.
 
+### Alert keamanan + Telegram
+
+Tiga aturan (threshold di bagian `security:` pada `configs/detection.yaml`):
+
+| Alert | Pemicu |
+|---|---|
+| `restricted_zone` | Orang non-staf di zona `kind: restricted` (dapur/gudang), maksimal sekali per menit per zona |
+| `loitering` | Orang berada ≥ 10 menit tanpa duduk di meja atau memakai laptop, sekali per orang |
+| `after_hours` | Ada orang di luar `open_hour`–`close_hour` (kosong = nonaktif) |
+
+Setiap alert: foto disimpan di `data/alerts/` **setelah bagian kepala diburamkan**, dicatat di tabel `alerts` (tampil di dashboard), dan dikirim ke Telegram jika dikonfigurasi. Blur memakai area kepala di setiap kotak orang; orang yang tidak terdeteksi tidak ikut diburamkan.
+
+Mengaktifkan Telegram (token **jangan** dikirim ke siapa pun atau ditulis di kode):
+1. Di Telegram cari **@BotFather** → `/newbot` → salin token ke `.env` sebagai `TELEGRAM_TOKEN`.
+2. Buka bot-mu, kirim pesan "halo".
+3. `python scripts/telegram_test.py` → muncul chat id → isi `TELEGRAM_CHAT_ID` di `.env`.
+4. Jalankan script yang sama sekali lagi → pesan tes masuk ke Telegram.
+
 ---
 
 ## 1. Architectural Highlights

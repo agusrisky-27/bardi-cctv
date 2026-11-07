@@ -92,7 +92,7 @@
       <div class="tile"><div class="v" id="avg_dwell">-</div><div class="l">Rata-rata lama di ruangan</div></div>
       <div class="tile"><div class="v" id="door_in">-</div><div class="l">Lewat pintu (masuk / keluar)</div></div>
       <div class="tile"><div class="v" id="laptop_total">-</div><div class="l">Total pakai laptop</div></div>
-      <div class="tile"><div class="v" id="food_wait">-</div><div class="l">Rata-rata tunggu makanan</div></div>
+      <div class="tile" id="food_tile" hidden><div class="v" id="food_wait">-</div><div class="l">Rata-rata tunggu makanan</div></div>
     </div>
     <p class="note err" id="error" hidden></p>
   </section>
@@ -112,6 +112,11 @@
         <tbody id="laptop_rows"><tr><td colspan="4">-</td></tr></tbody></table>
       <p class="note">ID hanya nomor tracking sementara, tidak terhubung ke identitas.</p>
     </div>
+    <div class="card">
+      <h2>Log alert keamanan</h2>
+      <table><thead><tr><th>Waktu</th><th>Jenis</th><th>Zona</th><th>Foto (wajah diburamkan)</th></tr></thead>
+        <tbody id="alert_rows"><tr><td colspan="4">-</td></tr></tbody></table>
+    </div>
     <div class="card"><h2>Heatmap posisi</h2><div id="heat_box" class="note">Heatmap belum ada.</div></div>
   </section>
 </main>
@@ -120,6 +125,7 @@
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const fmtDur = s => s == null ? '-' : s < 60 ? `${Math.round(s)} dtk` : s < 3600 ? `${(s / 60).toFixed(1)} mnt` : `${(s / 3600).toFixed(1)} jam`;
 const SIDE = {kiri: 'Kiri', kanan: 'Kanan', depan: 'Depan', belakang: 'Belakang'};
+const ALERT = {restricted_zone: 'Zona terlarang', loitering: 'Berdiam terlalu lama', after_hours: 'Di luar jam operasional'};
 const TITLES = {today: 'Hari ini', yesterday: 'Kemarin', '7d': '7 hari terakhir', '30d': '30 hari terakhir'};
 let range = 'today';
 const charts = {};
@@ -172,6 +178,7 @@ async function loadStats() {
     document.getElementById('door_in').textContent = `${s.door.in || 0} / ${s.door.out || 0}`;
     document.getElementById('laptop_total').textContent = fmtDur(s.laptop.total_seconds);
     document.getElementById('food_wait').textContent = fmtDur(s.avg_food_wait_seconds);
+    document.getElementById('food_tile').hidden = s.avg_food_wait_seconds == null;  // office use: no food data
 
     const hourly = s.bucket === 'hour';
     document.getElementById('series_title').textContent = hourly ? 'Pengunjung per jam' : 'Pengunjung per hari';
@@ -191,6 +198,10 @@ async function loadStats() {
     const rows = s.laptop.per_person.map(p =>
       `<tr><td>#${p.track_id}</td><td>${p.first_at.slice(5, 16).replace('T', ' ')}</td><td>${p.sessions}</td><td>${fmtDur(p.seconds)}</td></tr>`);
     document.getElementById('laptop_rows').innerHTML = rows.join('') || '<tr><td colspan="4">Belum ada data</td></tr>';
+    document.getElementById('alert_rows').innerHTML = s.alerts.map(a =>
+      `<tr><td>${a.at.slice(5, 16).replace('T', ' ')}</td><td>${ALERT[a.type] || a.type}</td><td>${a.zone || '-'}</td>` +
+      `<td>${a.snapshot ? `<a href="/alert-snapshot/${a.snapshot}" target="_blank" rel="noopener">lihat</a>` : '-'}</td></tr>`).join('')
+      || '<tr><td colspan="4">Tidak ada alert</td></tr>';
     showImage('heat_box', `/heatmap.png?t=${Date.now()}`, 'heat', 'Heatmap area yang paling sering diinjak', 'Heatmap belum ada.');
   } catch (e) {
     err.textContent = `Gagal memuat statistik: ${e.message}`;

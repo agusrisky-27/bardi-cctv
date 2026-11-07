@@ -24,7 +24,7 @@ import numpy as np
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from rcis.config.settings import load_dotenv  # noqa: E402
+from rcis.config.settings import camera_rotation, load_dotenv  # noqa: E402
 
 KINDS = ("table", "door", "cashier", "queue", "staff", "restricted", "area")
 
@@ -51,7 +51,10 @@ def main() -> int:
     parser.add_argument("--out", default="configs/zones.yaml")
     args = parser.parse_args()
 
+    load_dotenv()
     frame = grab_frame(args.source)
+    if camera_rotation() == 180:  # same orientation as the pipeline, so zones line up
+        frame = cv2.rotate(frame, cv2.ROTATE_180)
     h, w = frame.shape[:2]
     zones: list[dict] = []
     points: list[list[int]] = []

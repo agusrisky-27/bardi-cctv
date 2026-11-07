@@ -14,7 +14,7 @@ import numpy as np
 import supervision as sv
 
 from rcis.analytics import RestaurantAnalytics, load_zones
-from rcis.config.settings import AppConfig
+from rcis.config.settings import AppConfig, camera_rotation
 from rcis.detection.base import BaseDetector
 from rcis.detection.yolo_detector import YOLODetector
 from rcis.gender import GenderVoter
@@ -66,6 +66,7 @@ class VideoAnalyticsPipeline:
         self.restaurant = RestaurantDetector(self.config.models, self.detector.device, self.config.detection.input_size)
         self.gender = GenderVoter(self.config.models, self.detector.device)
         self._processed = 0
+        self._rotate_180 = camera_rotation() == 180
         self.security: Optional[Security] = None  # created with analytics (needs the DB)
         self._last_backup = time.time()
         self.backup_dir = os.environ.get("RCIS_BACKUP_DIR") or "data/backups"
@@ -109,7 +110,7 @@ class VideoAnalyticsPipeline:
         """
         Execute detection, tracking, and annotation on a single frame while profiling latencies.
         """
-        frame = frame_data.frame
+        frame = cv2.rotate(frame_data.frame, cv2.ROTATE_180) if self._rotate_180 else frame_data.frame
 
         # 1. Detection
         t_det_start = time.perf_counter()

@@ -74,3 +74,16 @@ tracking:
     assert loaded.detection.confidence_threshold == 0.45
     assert loaded.detection.device == "cpu"
     assert loaded.tracking.lost_track_buffer_frames == 45
+
+
+def test_camera_rotation(monkeypatch):
+    import pytest
+    from rcis.config.settings import camera_rotation
+
+    monkeypatch.delenv("RCIS_CAMERA_ROTATE", raising=False)
+    assert camera_rotation() == 0
+    monkeypatch.setenv("RCIS_CAMERA_ROTATE", "180")
+    assert camera_rotation() == 180
+    monkeypatch.setenv("RCIS_CAMERA_ROTATE", "90")
+    with pytest.raises(ValueError):
+        camera_rotation()

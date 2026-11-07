@@ -188,3 +188,11 @@ def load_dotenv(path: str = ".env") -> None:
         if line and not line.startswith("#") and "=" in line:
             key, value = line.split("=", 1)
             os.environ.setdefault(key.strip(), value.split(" #")[0].strip().strip('"').strip("'"))
+
+
+def camera_rotation() -> int:
+    """RCIS_CAMERA_ROTATE in .env: 180 when the camera is mounted upside down (tripod/ceiling), else 0."""
+    value = int(os.environ.get("RCIS_CAMERA_ROTATE", "0") or 0)
+    if value not in (0, 180):
+        raise ValueError(f"RCIS_CAMERA_ROTATE must be 0 or 180, got {value}")
+    return value

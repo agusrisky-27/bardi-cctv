@@ -88,11 +88,12 @@ class AnalyticsConfig(BaseModel):
     sitting_min_seconds: float = Field(default=10.0, ge=0.0)
     speed_window_seconds: float = Field(default=1.5, gt=0.0)
     visit_timeout_seconds: float = Field(default=5.0, gt=0.0)  # track unseen this long = left
+    live_recent_seconds: float = Field(default=1.0, gt=0.0)  # dashboard "people now" = seen within this
     min_visit_seconds: float = Field(default=2.0, ge=0.0)  # shorter tracks are noise
     table_merge_gap_seconds: float = Field(default=20.0, ge=0.0)  # tolerate ID switches at a table
     heatmap_scale: float = Field(default=0.25, gt=0.0, le=1.0)
     heatmap_save_every_seconds: float = Field(default=60.0, gt=0.0)
-    staff_min_tables: int = Field(default=3, ge=1)  # visits this many tables = staff, not customer
+    staff_min_tables: int = Field(default=3, ge=0)  # visits this many tables = staff, not customer; 0 = off
     staff_waiter_hits: int = Field(default=2, ge=1)  # waiter-detector overlaps before a track is staff
     food_confirm_seconds: float = Field(default=3.0, ge=0.0)  # plate must stay this long in a table zone
     # Laptop use (COCO class 63, no training needed). -1 disables the feature.

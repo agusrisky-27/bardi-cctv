@@ -129,3 +129,13 @@ def test_backup_keeps_only_recent_days(tmp_path):
     dailies = sorted(dest.glob("rcis_????-??-??.db"))
     assert len(dailies) == 14 and dailies[-1].name.startswith("rcis_2026-11")  # today's kept, oldest gone
     assert (dest / "rcis_latest.db").exists()
+
+
+def test_live_count_ignores_people_who_just_left(tmp_path):
+    a = _analytics(tmp_path)  # visit_timeout_seconds=3
+    t = 1_700_000_000.0
+    for i in range(4):
+        a.update(_person(1), t + i * 0.5)
+    a.update(sv.Detections.empty(), t + 3.0)  # #1 walked out 1.5 s ago: still kept for the visit log
+    a.update(_person(2, x=300), t + 3.5)  # walks straight back in as a new track
+    assert 1 in a.tracks and a.live_summary()["people_now"] == 1

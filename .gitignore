@@ -71,6 +71,7 @@ Thumbs.db
 
 # Analytics outputs (anonymous but local-only)
 data/*.db
+data/*.db*
 data/exports/heatmap.*
 configs/zones.yaml
 data/backups/

@@ -114,6 +114,7 @@ class RestaurantAnalytics:
         self.gender_lookup: Optional[Callable[[int], Tuple[Optional[str], Optional[float]]]] = None
         self._food_seen: Dict[str, float] = {}
         self._last_laptops = np.empty((0, 4))
+        self._now = 0.0
         self._last_food = np.empty((0, 4))
 
     # ------------------------------------------------------------------ update
@@ -132,6 +133,7 @@ class RestaurantAnalytics:
         laptops: Optional[sv.Detections] = None,
     ) -> None:
         """food / waiters are None on frames where the restaurant detector did not run."""
+        self._now = t
         if laptops is not None:
             self._last_laptops = laptops.xyxy
         if len(detections) and detections.tracker_id is not None:
@@ -159,7 +161,7 @@ class RestaurantAnalytics:
                 st.is_staff = (
                     st.is_staff
                     or st.waiter_hits >= self.cfg.staff_waiter_hits
-                    or len(st.tables_visited) >= self.cfg.staff_min_tables
+                    or 0 < self.cfg.staff_min_tables <= len(st.tables_visited)
                     or any(z.kind == "staff" and z.name in st.zones for z in self.zones)
                 )
                 self._add_heat(x, y)
@@ -242,13 +244,16 @@ class RestaurantAnalytics:
 
     def live_summary(self) -> dict:
         """Current state for the web dashboard (people now, door counts, zone occupancy, laptop users)."""
+        # Only people actually seen just now; lost tracks are kept up to visit_timeout for the visit log,
+        # but counting them here showed "2 people" when someone walked out and straight back in.
+        seen = [st for st in self.tracks.values() if self._now - st.last_t <= self.cfg.live_recent_seconds]
         return {
-            "people_now": len(self.tracks),
+            "people_now": len(seen),
             "count_in": self.count_in,
             "count_out": self.count_out,
-            "laptop_now": sum(1 for st in self.tracks.values() if self._laptop_active(st)),
-            "sitting_now": sum(1 for st in self.tracks.values() if st.sitting),
-            "zones": {z.name: sum(1 for st in self.tracks.values() if z.name in st.zones) for z in self.zones},
+            "laptop_now": sum(1 for st in seen if self._laptop_active(st)),
+            "sitting_now": sum(1 for st in seen if st.sitting),
+            "zones": {z.name: sum(1 for st in seen if z.name in st.zones) for z in self.zones},
         }
 
     def _close_zone(self, tid: int, st: TrackState, name: str, t: float) -> None:

@@ -28,6 +28,9 @@ class RestaurantDetector:
         self.imgsz = imgsz
         self.available = False
         self._model = None
+        if not cfg.restaurant_path:
+            logger.info("Restaurant detector off (restaurant_path empty): no food-wait / waiter detection.")
+            return
         path = Path(cfg.restaurant_path)
         if not path.exists():
             logger.warning("Restaurant weights not found at %s: food-wait & waiter detection disabled.", path)

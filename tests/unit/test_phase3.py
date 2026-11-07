@@ -126,3 +126,12 @@ def test_old_db_gets_role_column(tmp_path):
     s = Storage(db)
     s.add_visit(1, 0, 10, "kiri", None, None, "staff")
     assert s.conn.execute("SELECT role FROM visits").fetchone()[0] == "staff"
+
+
+def test_office_mode_never_marks_desk_hoppers_as_staff(tmp_path):
+    a = _make(tmp_path)
+    a.cfg.staff_min_tables = 0  # office: walking between desks is normal
+    t = 1_700_000_000.0
+    for i, x in enumerate([700, 700, 200, 200, 700, 700]):
+        a.update(_det(1, x, 700), t + i)
+    assert not a.tracks[1].is_staff

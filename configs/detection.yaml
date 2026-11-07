@@ -43,11 +43,12 @@ analytics:
   sitting_min_seconds: 10              # still inside a table zone this long = "duduk"
   speed_window_seconds: 1.5
   visit_timeout_seconds: 5             # track unseen this long = person left
+  live_recent_seconds: 1               # dashboard "people now" counts only people seen in the last 1 s
   min_visit_seconds: 2                 # ignore shorter tracks (false positives)
   table_merge_gap_seconds: 20          # table stays occupied across short occlusions / ID switches
   heatmap_scale: 0.25                  # heatmap grid = frame size x this
   heatmap_save_every_seconds: 60
-  staff_min_tables: 3                  # visits >= N different tables = staff (when no waiter model)
+  staff_min_tables: 0                  # restaurant: 3 (visits >= N tables = waiter). Office: 0 = off, people move between desks
   staff_waiter_hits: 2                 # waiter-detector overlaps before a track counts as staff
   food_confirm_seconds: 3              # plate must stay this long in a table zone = food arrived
   laptop_class_id: 63                  # COCO "laptop" (pretrained, no training). -1 = off
@@ -58,7 +59,7 @@ analytics:
 
 # Optional models trained in Colab (see colab/*.ipynb). Missing file = feature off, nothing crashes.
 models:
-  restaurant_path: "models/restaurant_detector.pt"
+  restaurant_path: ""                  # OFFICE CASE: empty = food/plate/waiter off. Restaurant: "models/restaurant_detector.pt"
   restaurant_conf: 0.35
   restaurant_every_n: 3                # run every 3rd processed frame
   food_classes: ["plate_food"]

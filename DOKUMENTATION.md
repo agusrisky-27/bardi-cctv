@@ -52,6 +52,8 @@ Tidak ada catatan di repo. Project mulai dikerjakan hari Jumat.
 - Memperbaiki jumlah orang live yang sempat terhitung 2 saat orang yang sama masuk lagi (`live_recent_seconds`) — belum di-commit.
 - Menulis `docs/CHECKLIST_SENIN.md` untuk uji di kantor.
 - Menyusun ulang `README.md` dan membuat file dokumentasi ini.
+- Training model gender di Google Colab (`colab/train_gender_classifier.ipynb`, YOLO11n-cls, imgsz 96). Hasil `models/gender_classifier.pt`: akurasi validasi 81%.
+- Uji model gender di pipeline dengan `data/videos/sample.mp4`: model termuat dan berjalan (~126 FPS). Orang di video contoh terlalu kecil (6–21% tinggi gambar, batas 25%), jadi tercatat `unknown` sesuai aturan. Uji asli menunggu kamera.
 
 **Hasil:**
 - Orang terdeteksi di 99% frame uji (confidence rata-rata 0.76).

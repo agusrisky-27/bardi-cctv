@@ -65,7 +65,7 @@ Kamera BARDI --RTSP--> pembaca frame --> YOLO11 (orang, laptop) --> ByteTrack (I
 |---|---|
 | Garis pintu (hitung masuk/keluar + sisi datang), zona, heatmap, dwell time | Zona dan garis pintu belum digambar untuk ruangan kantor |
 | Durasi pakai laptop | Laptop belum terdeteksi: kamera ada di belakang orang sehingga laptop tertutup badan |
-| Gender (estimasi agregat) | Model belum dilatih (notebook Colab sudah siap) |
+| Gender (estimasi agregat) | Model sudah dilatih di Colab (akurasi validasi 81%), belum diuji dengan kamera |
 | Waktu tunggu makanan, pelayan vs pelanggan | Ditunda ke tahap restoran |
 
 ### Kualitas kode
@@ -91,7 +91,7 @@ Kamera BARDI --RTSP--> pembaca frame --> YOLO11 (orang, laptop) --> ByteTrack (I
 - Jika laptop masih terlalu kecil di gambar, coba `detection.input_size: 960`.
 - Commit dan push perubahan yang belum di-commit.
 - Tentukan cara backup ke Google Drive: kirim manual lewat AirDrop ke iPhone, atau pasang Google Drive for desktop lalu isi `RCIS_BACKUP_DIR` (otomatis).
-- Opsional: jalankan notebook gender di Colab, lalu taruh `gender_classifier.pt` di `models/`.
+- Uji model gender dengan kamera. Jika banyak `unknown`, pertimbangkan menurunkan `gender_min_height_ratio`.
 
 ### Tahap restoran (nanti)
 
@@ -121,7 +121,7 @@ Kamera BARDI --RTSP--> pembaca frame --> YOLO11 (orang, laptop) --> ByteTrack (I
 - **ID tracker bisa berganti:** orang yang tertutup benda/orang lain bisa dihitung dua kali.
 - **"Pakai laptop" hanya perkiraan:** artinya ada laptop di depan orang yang diam ≥ 5 detik. Sistem tidak tahu laptop benar-benar dipakai.
 - **Resolusi sub-stream rendah (640x360):** laptop dan orang yang jauh sulit terdeteksi.
-- **Gender hanya estimasi kasar** dan modelnya belum dilatih.
+- **Gender hanya estimasi kasar:** akurasi validasi 81%, dan orang yang tingginya kurang dari 25% tinggi gambar tercatat `unknown`.
 - **Blur hanya untuk orang yang terdeteksi:** orang yang tidak terdeteksi tidak ikut diburamkan.
 - **Mac harus menyala terus** dan hanya mendukung satu kamera per proses.
 - **IP kamera bisa berubah** setiap pindah Wi-Fi atau restart router (sebaiknya IP dikunci di router).

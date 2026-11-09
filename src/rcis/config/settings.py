@@ -80,7 +80,6 @@ class AnalyticsConfig(BaseModel):
     """Thresholds for zone, dwell, sitting and visit analytics (all times in seconds)."""
 
     zones_path: str = "configs/zones.yaml"
-    db_path: str = "data/rcis.db"
     exports_dir: str = "data/exports"
     frame_stride: int = Field(default=1, ge=1, le=30)  # process every Nth frame
     # Speed in "frame heights per second" so it is resolution independent
@@ -88,7 +87,10 @@ class AnalyticsConfig(BaseModel):
     sitting_min_seconds: float = Field(default=10.0, ge=0.0)
     speed_window_seconds: float = Field(default=1.5, gt=0.0)
     visit_timeout_seconds: float = Field(default=5.0, gt=0.0)  # track unseen this long = left
+    # A new tracker ID whose footpoint is this close (frame heights) to a just-lost one is the same person; 0 = off
+    relink_max_distance: float = Field(default=0.2, ge=0.0)
     live_recent_seconds: float = Field(default=1.0, gt=0.0)  # dashboard "people now" = seen within this
+    live_update_seconds: float = Field(default=5.0, gt=0.0)  # write live counters to MySQL for the dashboard
     min_visit_seconds: float = Field(default=2.0, ge=0.0)  # shorter tracks are noise
     table_merge_gap_seconds: float = Field(default=20.0, ge=0.0)  # tolerate ID switches at a table
     heatmap_scale: float = Field(default=0.25, gt=0.0, le=1.0)
@@ -99,6 +101,7 @@ class AnalyticsConfig(BaseModel):
     # Laptop use (COCO class 63, no training needed). -1 disables the feature.
     laptop_class_id: int = Field(default=63, ge=-1)
     laptop_min_seconds: float = Field(default=5.0, ge=0.0)  # shorter sessions are ignored
+    laptop_min_confidence: float = Field(default=0.25, ge=0.0, le=1.0)  # laptops only; persons keep detection.confidence_threshold
     laptop_gap_seconds: float = Field(default=5.0, ge=0.0)  # tolerate missed laptop detections
     laptop_near_margin: float = Field(default=0.3, ge=0.0)  # expand person box by this fraction to find "their" laptop
     # DB backup to a cloud-synced folder (RCIS_BACKUP_DIR in .env, default data/backups). 0 = only at shutdown.
@@ -127,7 +130,7 @@ class SecurityConfig(BaseModel):
 
     alerts_dir: str = "data/alerts"  # only face-blurred snapshots are ever written here
     restricted_cooldown_seconds: float = Field(default=60.0, ge=0.0)
-    loiter_seconds: float = Field(default=600.0, gt=0.0)  # present this long without sitting/laptop = loitering
+    loiter_seconds: float = Field(default=600.0, ge=0.0)  # present this long without sitting/laptop = loitering; 0 = off
     after_hours_cooldown_seconds: float = Field(default=600.0, ge=0.0)
     open_hour: Optional[int] = Field(default=None, ge=0, le=23)  # None = after-hours alert off
     close_hour: Optional[int] = Field(default=None, ge=0, le=23)

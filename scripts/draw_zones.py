@@ -55,6 +55,8 @@ def main() -> int:
     frame = grab_frame(args.source)
     if camera_rotation() == 180:  # same orientation as the pipeline, so zones line up
         frame = cv2.rotate(frame, cv2.ROTATE_180)
+    if frame.shape[1] > 1280:  # 1080p main stream does not fit a laptop screen; zones are saved normalized
+        frame = cv2.resize(frame, (1280, round(frame.shape[0] * 1280 / frame.shape[1])))
     h, w = frame.shape[:2]
     zones: list[dict] = []
     points: list[list[int]] = []

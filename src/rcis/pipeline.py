@@ -51,8 +51,13 @@ class VideoAnalyticsPipeline:
         self.config = config or AppConfig()
         # Laptops come from the same COCO inference as persons (one model call, no training)
         laptop_id = self.config.analytics.laptop_class_id
-        if laptop_id >= 0 and laptop_id not in self.config.detection.target_classes:
-            self.config.detection.target_classes = [*self.config.detection.target_classes, laptop_id]
+        self._person_conf = self.config.detection.confidence_threshold
+        if laptop_id >= 0:
+            if laptop_id not in self.config.detection.target_classes:
+                self.config.detection.target_classes = [*self.config.detection.target_classes, laptop_id]
+            # Laptops seen from behind/angled score low (~0.4), so the single model call runs at the lower
+            # laptop threshold and persons are filtered back to their own threshold after it.
+            self.config.detection.confidence_threshold = min(self._person_conf, self.config.analytics.laptop_min_confidence)
         self.video_source = video_source or create_video_source(self.config.camera)
         self.detector = detector or YOLODetector(self.config.detection)
         self.tracker = tracker or ByteTrackTracker(self.config.tracking)
@@ -69,6 +74,7 @@ class VideoAnalyticsPipeline:
         self._rotate_180 = camera_rotation() == 180
         self.security: Optional[Security] = None  # created with analytics (needs the DB)
         self._last_backup = time.time()
+        self._last_live = 0.0
         self.backup_dir = os.environ.get("RCIS_BACKUP_DIR") or "data/backups"
         self.live = live  # web dashboard state (latest JPEG + counters), None = no web
         self._t0 = time.time()  # wall clock at start; frame timestamps are offsets from it
@@ -97,8 +103,10 @@ class VideoAnalyticsPipeline:
             zones, line = [], None
             logger.warning("%s not found: running without zones / door line. Draw them with scripts/draw_zones.py",
                            cfg.zones_path)
-        logger.info("Analytics: %d zones, door line: %s, DB: %s", len(zones), line is not None, cfg.db_path)
-        analytics = RestaurantAnalytics(cfg, (meta.width, meta.height), zones, line, Storage(cfg.db_path))
+        storage = Storage.from_env()
+        logger.info("Analytics: %d zones, door line: %s, DB: MySQL %s/%s", len(zones), line is not None,
+                    os.environ.get("RCIS_MYSQL_HOST") or "127.0.0.1", os.environ.get("RCIS_MYSQL_DATABASE") or "rcis")
+        analytics = RestaurantAnalytics(cfg, (meta.width, meta.height), zones, line, storage)
         analytics.gender_lookup = self.gender.pop
         self.security = Security(self.config.security, analytics.storage)
         return analytics
@@ -119,6 +127,7 @@ class VideoAnalyticsPipeline:
         if self.config.analytics.laptop_class_id >= 0 and raw_detections.class_id is not None:
             is_laptop = raw_detections.class_id == self.config.analytics.laptop_class_id
             laptops, raw_detections = raw_detections[is_laptop], raw_detections[~is_laptop]
+            raw_detections = raw_detections[raw_detections.confidence >= self._person_conf]
         det_ms = (time.perf_counter() - t_det_start) * 1000.0
 
         # 2. Tracking
@@ -220,6 +229,13 @@ class VideoAnalyticsPipeline:
                     if key in (ord("q"), 27):  # 'q' or ESC
                         logger.info("Pipeline stopped by user keypress.")
                         break
+
+                if self.analytics is not None and self.analytics.storage is not None \
+                        and time.time() - self._last_live >= self.config.analytics.live_update_seconds:
+                    self._last_live = time.time()
+                    live = self.analytics.live_summary()
+                    live["fps"] = self.profiler.get_summary().get("fps")
+                    self.analytics.storage.set_live(live)  # dashboard "Saat ini"; stale = engine off
 
                 every = self.config.analytics.backup_every_hours * 3600
                 if every and time.time() - self._last_backup >= every:

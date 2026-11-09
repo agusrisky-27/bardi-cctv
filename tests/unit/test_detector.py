@@ -34,3 +34,12 @@ def test_detector_blank_canvas():
     assert isinstance(detections, sv.Detections)
     # A blank black canvas should yield 0 person detections
     assert len(detections) == 0
+
+
+def test_missing_coreml_model_falls_back_to_pt(tmp_path):
+    import shutil
+    from pathlib import Path
+
+    shutil.copy(Path(__file__).parents[2] / "models" / "yolo11n.pt", tmp_path / "yolo.pt")
+    det = YOLODetector(DetectionConfig(model_path=str(tmp_path / "yolo.mlpackage"), device="cpu"))
+    assert det._model.ckpt_path.endswith("yolo.pt")  # the deleted .mlpackage is replaced by the .pt next to it

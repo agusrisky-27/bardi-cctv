@@ -12,6 +12,8 @@ pyyaml>=6.0.1
 # Web dashboard
 fastapi>=0.110.0
 uvicorn>=0.29.0
+coremltools>=9.0  # runs models/*.mlpackage on the Apple Neural Engine (export needs torch<=2.7 + numpy<2, see models/README.md)
+PyMySQL>=1.1.0  # MySQL database shared with the Laravel dashboard (dashboard/)
 
 # Performance Monitoring & Utilities
 psutil>=5.9.0

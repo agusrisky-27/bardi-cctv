@@ -43,4 +43,4 @@ addopts = "-ra -q --import-mode=importlib"
 testpaths = [
     "tests",
 ]
-pythonpath = ["src"]
+pythonpath = ["src", "tests"]

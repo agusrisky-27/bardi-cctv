@@ -63,11 +63,10 @@ Hitungan IN/OUT terbalik? Tukar titik awal dan akhir garis pintu (gambar ulang g
 ## E. Menjalankan
 
 ```bash
-rm -f data/rcis.db data/rcis.db-wal data/rcis.db-shm   # hapus data percobaan lama sebelum uji resmi
 python -m rcis.cli --rtsp --web
 ```
 
-Buka **127.0.0.1:8000** di Chrome/Safari. Untuk membuka dari HP: isi `RCIS_WEB_PASSWORD` di `.env`, jalankan ulang, lalu buka `http://IP-MAC:8000` (HP satu Wi-Fi dengan Mac).
+Jalankan dashboard Laravel (`cd dashboard && php artisan serve --port=8080`) lalu buka **127.0.0.1:8080**. Panduan: `dashboard/README.md`.
 
 Catatan membaca hasil:
 - Kotak "Saat ini" langsung bergerak. Angka ringkasan dan grafik baru bertambah sekitar 5 detik setelah orang **keluar dari pandangan kamera** (kunjungan dicatat saat selesai).
@@ -86,13 +85,7 @@ Isi kolom "manual" saat kejadian berlangsung, lalu bandingkan dengan program.
 | 5 | Orang berjalan lewat di belakang orang lain (terhalang) | ID tetap? | | Lihat apakah ID (#) berganti |
 | 6 | 1 orang keluar-masuk 3 kali | 3 | | Bisa terhitung lebih jika ID berganti |
 
-Melihat data mentah:
-```bash
-sqlite3 data/rcis.db "SELECT * FROM line_crossings;"
-sqlite3 data/rcis.db "SELECT track_id, zone_name, seconds, is_sitting FROM zone_events;"
-sqlite3 data/rcis.db "SELECT track_id, activity, seconds FROM activity_events;"
-sqlite3 data/rcis.db "SELECT * FROM visits;"
-```
+Melihat data mentah: buka phpMyAdmin → database `rcis` → tabel `visits`, `zone_events`, `activity_events`, `line_crossings` → tab **Browse**.
 
 Hitung selisihnya: `akurasi = 1 - |program - manual| / manual`. Catat juga kasus yang meleset (orang berkerumun, terhalang, cahaya buruk), karena itu bahan pembahasan di laporan.
 

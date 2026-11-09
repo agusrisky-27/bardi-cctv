@@ -13,16 +13,16 @@ Catatan harian pengerjaan: [DOKUMENTATION.md](DOKUMENTATION.md).
 RCIS (*Restaurant CCTV Intelligence System*) adalah project magang yang mengubah rekaman kamera CCTV biasa menjadi data statistik ruangan, tanpa mengenali identitas orang.
 
 - **Kamera:** BARDI PTZ 360, dibaca lewat RTSP (port `8554`).
-- **Otak:** YOLO11n (deteksi orang dan laptop) + ByteTrack (memberi ID sementara ke tiap orang), berjalan di Mac Apple Silicon (`mps`).
-- **Penyimpanan:** SQLite lokal (`data/rcis.db`) + backup otomatis per jam.
-- **Tampilan:** dashboard web lokal (FastAPI + Chart.js) dan notifikasi Telegram.
+- **Otak:** YOLO11s (deteksi orang dan laptop) + ByteTrack (memberi ID sementara ke tiap orang), berjalan di Mac Apple Silicon (`mps`).
+- **Penyimpanan:** MySQL (XAMPP, database `rcis`) yang dipakai bersama dashboard, + backup `.sql` otomatis per jam di `data/backups/`.
+- **Tampilan:** dashboard Laravel + MySQL multi-akun (admin/bos dan petugas) di [dashboard/](dashboard/README.md), dan notifikasi Telegram. Program Python hanya menyediakan video live, heatmap, dan foto alert untuk dashboard itu.
 - **Semua berjalan lokal di Mac.** Tidak ada hosting, video tidak dikirim ke internet, dan training model tidak pernah dijalankan di Mac (hanya di Google Colab).
 
 ### Dua tahap kasus
 
 | Tahap | Lokasi | Yang diukur |
 |---|---|---|
-| **1. Kantor (sekarang)** | Ruang meeting / kantor | Jumlah orang, arah datang, lama di ruangan, area yang paling lama ditempati, durasi pakai laptop, alert keamanan, dashboard, gender (opsional) |
+| **1. Kantor (sekarang)** | Ruang meeting / kantor | Jumlah orang, gender, lama di ruangan, durasi pakai laptop, waktu di sisi kiri vs kanan meja, arah datang, alert keamanan |
 | **2. Restoran (nanti)** | Restoran / cafe | Semua di atas + waktu tunggu makanan, pelayan vs pelanggan |
 
 Kode restoran (`src/rcis/restaurant.py`) sudah ada tetapi **dimatikan** lewat config (`restaurant_path: ""`). Untuk tahap restoran cukup mengubah 2 baris di `configs/detection.yaml`.
@@ -31,9 +31,38 @@ Kode restoran (`src/rcis/restaurant.py`) sudah ada tetapi **dimatikan** lewat co
 
 ```text
 Kamera BARDI --RTSP--> pembaca frame --> YOLO11 (orang, laptop) --> ByteTrack (ID sementara)
-   --> analitik (garis pintu, zona, dwell, heatmap, laptop, alert) --> SQLite + backup
-   --> dashboard web  /  Telegram
+   --> analitik (zona kiri/kanan, lama di ruangan, heatmap, laptop, alert) --> MySQL + backup .sql
+   --> MySQL --> dashboard Laravel (bos / petugas)   dan   Telegram
 ```
+
+### Cara sistem menilai
+
+| Yang diukur | Kriteria |
+|---|---|
+| **Kunjungan** | Satu orang dari pertama terlihat sampai hilang > 5 detik. Orang yang keluar lalu masuk lagi = kunjungan baru (sistem tidak mengenali identitas). ID yang hilang sebentar lalu muncul lagi di dekat posisi yang sama tetap dianggap orang yang sama |
+| **Maks. orang bersamaan** | Jumlah orang terbanyak di ruangan pada saat yang sama; perkiraan jumlah orang berbeda per hari |
+| **Lama di ruangan** | Selisih waktu pertama dan terakhir terlihat |
+| **Pakai laptop** | Laptop terdeteksi (keyakinan ≥ 0.25) dengan titik tengahnya di dalam kotak orang yang diperlebar 30%, bertahan ≥ 5 detik. Laptop yang hilang ≤ 5 detik (tertutup tangan) tidak memutus sesi. Sistem tidak tahu apakah layar benar-benar dilihat |
+| **Sisi kiri / kanan** | Titik bawah kotak orang berada di dalam zona `sisi_kiri` atau `sisi_kanan`; dicatat berapa menit dan berapa orang |
+| **Gender** | Estimasi dari ≥ 5 frame per orang; `unknown` jika ragu (< 0.65) atau orang terlalu kecil di gambar |
+
+### Mengisi area kiri dan kanan meja
+
+Dilakukan sekali setelah kamera dipasang permanen. Ulangi jika kamera digeser atau diputar.
+
+1. Jalankan (program analitik harus berhenti dulu):
+   ```bash
+   cd ~/Documents/cctv
+   source .venv/bin/activate
+   python scripts/draw_zones.py --source rtsp
+   ```
+2. Muncul foto dari kamera. Klik titik-titik mengelilingi **separuh meja sisi kiri beserta kursinya** (minimal 4 titik). Batas kanannya = garis tengah meja.
+3. Tekan `n`. Di Terminal ketik nama `sisi_kiri`, Enter, lalu jenis `area`, Enter.
+4. Klik jendela foto lagi, lakukan hal yang sama untuk separuh kanan dengan nama `sisi_kanan`.
+5. Tekan `s` untuk menyimpan ke `configs/zones.yaml`. Salah klik: `u` (hapus titik terakhir), `q` (keluar tanpa menyimpan).
+6. Jalankan lagi `python -m rcis.cli --rtsp --web`. Hasilnya di grafik **"Area paling lama ditempati (menit)"**.
+
+Tips: zona harus mencakup **permukaan meja di depan kursi**, bukan hanya lantai, karena kaki orang yang duduk tertutup meja sehingga bagian bawah kotaknya berhenti di tepi meja.
 
 ### Prinsip privasi
 
@@ -45,53 +74,47 @@ Kamera BARDI --RTSP--> pembaca frame --> YOLO11 (orang, laptop) --> ByteTrack (I
 
 ---
 
-## 2. Progres Saat Ini (per 7 November 2026)
+## 2. Progres Saat Ini (per 9 November 2026)
 
-### Sudah selesai dan sudah diuji dengan kamera asli
+### Sudah selesai dan sudah diuji dengan kamera asli di kantor
 
 | Fitur | Status |
 |---|---|
-| Koneksi kamera BARDI via RTSP (ONVIF di app BARDI, `/Streaming/Channels/102`, 640x360, ~24 FPS) | Jalan, auto-reconnect jika putus |
-| Deteksi + tracking orang (YOLO11n + ByteTrack, `mps`) | Jalan, orang terdeteksi di 99% frame uji (confidence rata-rata 0.76) |
-| Jumlah orang saat ini (live) | Jalan, bug hitungan ganda saat orang masuk lagi sudah diperbaiki |
+| Koneksi kamera BARDI via RTSP (ONVIF di app BARDI, stream utama `/Streaming/Channels/101`, 1920x1080, ~20 FPS) | Jalan, auto-reconnect jika putus |
+| Deteksi + tracking orang (YOLO11n + ByteTrack, `mps`, `input_size 960`) | Jalan, orang terdeteksi di 100% frame uji (confidence rata-rata 0.87), ~26 FPS |
+| Durasi pakai laptop | Jalan, laptop terdeteksi di 89% frame uji setelah kamera dipindah serong dari atas |
+| Jumlah orang saat ini (live) | Jalan |
 | Dashboard web (video live, statistik, rentang hari ini/kemarin/7 hari/30 hari) | Jalan |
+| Dashboard Laravel + MySQL multi-user (admin/bos, petugas) di `dashboard/` | Sudah dibuat dan diuji dengan MariaDB sementara; belum dipasang di XAMPP. Panduan: [dashboard/README.md](dashboard/README.md) |
 | Alert Telegram (zona terlarang, berlama-lama/loitering, di luar jam kerja) + blur kepala | Jalan, pesan tes masuk ke Telegram |
-| Database SQLite + backup per jam ke `data/backups/` | Jalan |
+| Database MySQL + backup `.sql` per jam ke `data/backups/` | Sudah diuji dengan MariaDB sementara |
 | Rotasi gambar untuk kamera yang dipasang terbalik (`RCIS_CAMERA_ROTATE`) | Jalan |
 
-### Sudah ditulis, belum terbukti di lokasi
+### Sudah ditulis, masih perlu diuji lebih lama
 
-| Fitur | Kendala |
+| Fitur | Catatan |
 |---|---|
-| Garis pintu (hitung masuk/keluar + sisi datang), zona, heatmap, dwell time | Zona dan garis pintu belum digambar untuk ruangan kantor |
-| Durasi pakai laptop | Laptop belum terdeteksi: kamera ada di belakang orang sehingga laptop tertutup badan |
-| Gender (estimasi agregat) | Model sudah dilatih di Colab (akurasi validasi 81%), belum diuji dengan kamera |
+| Lama di ruangan dan jumlah pengunjung | ID orang sempat sering berganti; sudah diperbaiki dengan penyambungan ID (`relink_max_distance`), perlu uji ulang dengan beberapa orang |
+| Arah datang | Tanpa garis pintu, arah = sisi gambar tempat orang pertama terlihat |
+| Gender (estimasi agregat) | Model dilatih di Colab (akurasi validasi 81%); di kamera sebagian besar masih `unknown` |
 | Waktu tunggu makanan, pelayan vs pelanggan | Ditunda ke tahap restoran |
 
 ### Kualitas kode
 
-- 40 unit/integration test lulus (`pytest`).
-- Notebook Colab siap: `colab/train_gender_classifier.ipynb` dan `colab/train_restaurant_detector.ipynb` (belum dijalankan).
-- Beberapa perbaikan terakhir (hitungan live, mode kantor) belum di-commit.
+- 43 unit/integration test lulus (`pytest`).
+- Notebook gender sudah dijalankan; notebook detector restoran belum.
 
 ---
 
 ## 3. Yang Akan Dikerjakan
 
-### Senin, 9 November 2026 (di kantor)
-
-1. Pairing ulang kamera ke Wi-Fi kantor dan cari IP barunya.
-2. Pasang kamera **serong dari samping-atas meja**, bukan di belakang orang. Bersihkan lensa.
-3. Gambar zona dan garis pintu: `python scripts/draw_zones.py --source rtsp`.
-4. Jalankan semua langkah di [docs/CHECKLIST_SENIN.md](docs/CHECKLIST_SENIN.md).
-
 ### Minggu ini
 
-- Bandingkan stream utama `/101` dengan sub-stream `/102` untuk deteksi orang dan laptop. Pilih yang lebih baik.
-- Jika laptop masih terlalu kecil di gambar, coba `detection.input_size: 960`.
+- Uji ulang hitungan pengunjung dan lama di ruangan dengan 3–4 orang yang keluar-masuk; cocokkan dengan hitungan manual.
+- Uji gender di kamera. Jika banyak `unknown`, pertimbangkan menurunkan `gender_min_height_ratio`.
+- Opsional: gambar zona/garis pintu (`python scripts/draw_zones.py --source rtsp`) jika butuh statistik per meja atau hitung masuk/keluar lewat pintu.
 - Commit dan push perubahan yang belum di-commit.
 - Tentukan cara backup ke Google Drive: kirim manual lewat AirDrop ke iPhone, atau pasang Google Drive for desktop lalu isi `RCIS_BACKUP_DIR` (otomatis).
-- Uji model gender dengan kamera. Jika banyak `unknown`, pertimbangkan menurunkan `gender_min_height_ratio`.
 
 ### Tahap restoran (nanti)
 
@@ -117,7 +140,7 @@ Kamera BARDI --RTSP--> pembaca frame --> YOLO11 (orang, laptop) --> ByteTrack (I
 
 ### Kekurangan
 
-- **Kamera PTZ:** jika kamera diputar (manual atau auto-tracking), semua zona jadi salah dan harus digambar ulang.
+- **Kamera PTZ:** jika kamera diputar (manual atau auto-tracking), zona (jika dipakai) jadi salah dan arah datang bergeser; matikan auto-tracking/patrol.
 - **ID tracker bisa berganti:** orang yang tertutup benda/orang lain bisa dihitung dua kali.
 - **"Pakai laptop" hanya perkiraan:** artinya ada laptop di depan orang yang diam ≥ 5 detik. Sistem tidak tahu laptop benar-benar dipakai.
 - **Resolusi sub-stream rendah (640x360):** laptop dan orang yang jauh sulit terdeteksi.
@@ -148,7 +171,7 @@ Isi `.env`: `RCIS_RTSP_URL`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`, dan opsional 
 ### Koneksi kamera BARDI
 
 1. Di app BARDI, aktifkan menu **ONVIF** dan catat password-nya. Username: `admin`.
-2. Tes di VLC (*File → Open Network*): `rtsp://admin:PASSWORD@<IP_KAMERA>:8554/Streaming/Channels/102`.
+2. Tes di VLC (*File → Open Network*): `rtsp://admin:PASSWORD@<IP_KAMERA>:8554/Streaming/Channels/101` (stream utama; `/102` = sub-stream 640x360).
 3. Jika tampil, salin URL itu ke `RCIS_RTSP_URL` di `.env`.
 
 Detail: [docs/CAMERA_SETUP.md](docs/CAMERA_SETUP.md).
@@ -162,8 +185,8 @@ python scripts/draw_zones.py --source rtsp
 python -m rcis.cli --rtsp --web
 ```
 
-- Buka dashboard di `http://127.0.0.1:8000`. Dari HP: isi `RCIS_WEB_PASSWORD`, lalu buka `http://<IP-Mac>:8000`.
-- Hanya lihat riwayat (tanpa kamera): `python -m rcis.web`.
+- Dashboard: jalankan Laravel di Terminal lain (`cd dashboard && php artisan serve --port=8080`), lalu buka `http://127.0.0.1:8080`. Panduan: [dashboard/README.md](dashboard/README.md).
+- `--web` menyalakan video live di port 8000 untuk dashboard Laravel (`RCIS_ENGINE_URL`).
 - Dari file video: `python -m rcis.cli --video data/videos/sample.mp4 --display --stride 2`.
 - Dari webcam Mac: `python -m rcis.cli --webcam 0 --display`.
 - Berhenti: tekan `Ctrl+C` (backup terakhir dibuat otomatis).

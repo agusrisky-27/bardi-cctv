@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-import sqlite3
 
 import numpy as np
 import supervision as sv
@@ -11,10 +9,9 @@ from fastapi.testclient import TestClient
 
 from rcis.analytics import RestaurantAnalytics
 from rcis.config.settings import AnalyticsConfig
-from rcis.storage import Storage
-from rcis.web import LiveState, create_app, query_stats
+from memdb import memory_storage
+from rcis.web import LiveState, create_app
 
-NOW = datetime(2026, 11, 9, 15, 30)  # a Monday afternoon
 
 
 def _person(tid: int, x: float = 500, y: float = 700) -> sv.Detections:
@@ -30,7 +27,7 @@ def _laptop(x: float = 500, y: float = 520) -> sv.Detections:
 def _analytics(tmp_path) -> RestaurantAnalytics:
     cfg = AnalyticsConfig(exports_dir=str(tmp_path), speed_window_seconds=1.0, visit_timeout_seconds=3,
                           heatmap_save_every_seconds=1e9, laptop_min_seconds=5, laptop_gap_seconds=3)
-    return RestaurantAnalytics(cfg, (1000, 1000), [], None, Storage(":memory:"))
+    return RestaurantAnalytics(cfg, (1000, 1000), [], None, memory_storage())
 
 
 def test_laptop_session_tolerates_missed_detections(tmp_path):
@@ -56,79 +53,62 @@ def test_laptop_far_away_or_walking_does_not_count(tmp_path):
     assert a.storage.conn.execute("SELECT COUNT(*) FROM activity_events").fetchone()[0] == 0
 
 
-def _seed(db) -> None:
-    s = Storage(db)
-    today, yesterday = datetime(2026, 11, 9, 10).timestamp(), datetime(2026, 11, 8, 10).timestamp()
-    last_month = datetime(2026, 10, 1, 10).timestamp()
-    s.add_visit(1, today, today + 600, "kiri", "male", 0.9)
-    s.add_visit(2, today + 60, today + 120, "kanan", None, None)
-    s.add_visit(3, today, today + 900, "kiri", None, None, "staff")  # excluded from visitors
-    s.add_visit(4, yesterday, yesterday + 300, "depan", "female", 0.8)
-    s.add_visit(5, last_month, last_month + 60, "kiri")
-    s.add_activity(1, "laptop", today, today + 300)
-    s.add_activity(1, "laptop", today + 400, today + 500)
-    s.add_zone_event(1, "meja_1", today, today + 600, True)
-    s.add_line_crossing(1, "in", "kiri", today)
-    s.close()
-
-
-def test_stats_ranges(tmp_path):
-    db = tmp_path / "rcis.db"
-    _seed(db)
-    conn = Storage(db).conn
-    today = query_stats(conn, "today", NOW)
-    assert today["visitors"] == 2 and today["gender"] == {"male": 1, "female": 0, "unknown": 1}
-    assert today["entry_sides"] == {"kiri": 1, "kanan": 1}
-    assert today["series"]["values"][10] == 2 and len(today["series"]["labels"]) == 24
-    assert today["laptop"]["total_seconds"] == 400 and today["laptop"]["per_person"][0]["sessions"] == 2
-    assert today["zones"][0]["zone"] == "meja_1" and today["door"] == {"in": 1}
-    assert query_stats(conn, "yesterday", NOW)["visitors"] == 1
-    week = query_stats(conn, "7d", NOW)
-    assert week["visitors"] == 3 and len(week["series"]["labels"]) == 7 and week["series"]["values"][-1] == 2
-    assert query_stats(conn, "30d", NOW)["visitors"] == 3  # 1 Oct is outside the last 30 days
-
-
-def test_api_auth_and_live(tmp_path):
-    db = tmp_path / "rcis.db"
-    _seed(db)
+def test_video_server_auth(tmp_path):
     live = LiveState()
     live.set(b"\xff\xd8jpeg", {"people_now": 2})
-    client = TestClient(create_app(db, live, tmp_path, password="rahasia"))
-    assert client.get("/api/stats").status_code == 401
-    assert client.get("/api/stats", auth=("x", "salah")).status_code == 401
-    r = client.get("/api/stats?range=7d", auth=("x", "rahasia"))
-    assert r.status_code == 200 and r.json()["range"] == "7d"
-    assert client.get("/api/stats?range=999d", auth=("x", "rahasia")).status_code == 422
-    assert client.get("/api/live", auth=("x", "rahasia")).json() == {"available": True, "people_now": 2}
-    assert "CCTV Analitik" in client.get("/", auth=("x", "rahasia")).text
+    (tmp_path / "heatmap.png").write_bytes(b"png")
+    client = TestClient(create_app(live, tmp_path, password="rahasia", alerts_dir=tmp_path))
+    assert client.get("/heatmap.png").status_code == 401
+    assert client.get("/heatmap.png", auth=("x", "salah")).status_code == 401
+    assert client.get("/heatmap.png", auth=("x", "rahasia")).content == b"png"
+    assert client.get("/alert-snapshot/..%2Frcis.db", auth=("x", "rahasia")).status_code == 404
 
 
-def test_api_without_password_and_without_pipeline(tmp_path):
-    client = TestClient(create_app(tmp_path / "missing.db", None, tmp_path))
-    assert client.get("/api/stats").status_code == 404  # DB not created yet
-    assert client.get("/api/live").json() == {"available": False}
+def test_video_server_without_pipeline(tmp_path):
+    client = TestClient(create_app(None, tmp_path))
     assert client.get("/video").status_code == 404
+    assert client.get("/heatmap.png").status_code == 404
 
 
-def test_backup_copies_all_rows(tmp_path):
-    db = tmp_path / "rcis.db"
-    _seed(db)
-    s = Storage(db)
-    daily = s.backup(tmp_path / "backup")
-    s.add_visit(9, 0, 1, "kiri")  # written after the backup: must not appear in it
-    for f in (daily, tmp_path / "backup" / "rcis_latest.db"):
-        assert sqlite3.connect(f).execute("SELECT COUNT(*) FROM visits").fetchone()[0] == 5
-
-
-def test_backup_keeps_only_recent_days(tmp_path):
+def test_backup_runs_mysqldump_and_keeps_14_days(tmp_path, monkeypatch):
     dest = tmp_path / "backup"
     dest.mkdir()
     for day in range(1, 21):  # 20 old daily backups
-        (dest / f"rcis_2026-10-{day:02d}.db").write_bytes(b"x")
-    Storage(":memory:").backup(dest, keep_days=14)
-    dailies = sorted(dest.glob("rcis_????-??-??.db"))
-    assert len(dailies) == 14 and dailies[-1].name.startswith("rcis_2026-11")  # today's kept, oldest gone
-    assert (dest / "rcis_latest.db").exists()
+        (dest / f"rcis_2026-10-{day:02d}.sql").write_text("old")
+    calls = []
+
+    def fake_run(cmd, stdout, env, **kw):
+        calls.append((cmd, env.get("MYSQL_PWD")))
+        stdout.write(b"INSERT INTO visits VALUES (1);")
+
+    monkeypatch.setattr("rcis.storage.subprocess.run", fake_run)
+    s = memory_storage()
+    s._settings = {"host": "127.0.0.1", "port": 3306, "user": "u", "password": "rahasia", "database": "rcis"}
+    daily = s.backup(dest, keep_days=14)
+    cmd, pwd = calls[0]
+    assert "rahasia" not in cmd and pwd == "rahasia"  # password via env, never visible in `ps`
+    assert "users" not in cmd and "visits" in cmd  # analytics only, no account hashes in backups
+    assert daily.read_bytes().startswith(b"INSERT") and (dest / "rcis_latest.sql").exists()
+    dailies = sorted(dest.glob("rcis_????-??-??.sql"))
+    assert len(dailies) == 14 and dailies[-1] == daily
+
+
+def test_rows_wait_in_memory_while_mysql_is_down(tmp_path):
+    s = memory_storage()
+    real = s.conn
+
+    class Down:
+        def cursor(self):
+            raise ConnectionError("mysql off")
+
+        def close(self):
+            pass
+
+    s.conn = Down()
+    assert s.add_visit(1, 0, 60, "kiri") is None  # kept, not lost
+    s._connect, s._retry_at = (lambda: real), 0.0
+    s.add_visit(2, 0, 60, "kanan")
+    assert real.execute("SELECT COUNT(*) FROM visits").fetchone()[0] == 2
 
 
 def test_live_count_ignores_people_who_just_left(tmp_path):
@@ -137,5 +117,5 @@ def test_live_count_ignores_people_who_just_left(tmp_path):
     for i in range(4):
         a.update(_person(1), t + i * 0.5)
     a.update(sv.Detections.empty(), t + 3.0)  # #1 walked out 1.5 s ago: still kept for the visit log
-    a.update(_person(2, x=300), t + 3.5)  # walks straight back in as a new track
+    a.update(_person(2, x=100), t + 3.5)  # someone else walks in far away: a new track, not a relink
     assert 1 in a.tracks and a.live_summary()["people_now"] == 1

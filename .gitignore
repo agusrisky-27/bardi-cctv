@@ -76,3 +76,8 @@ data/exports/heatmap.*
 configs/zones.yaml
 data/backups/
 data/alerts/
+
+# Claude Code local settings (per machine)
+.claude/settings.local.json
+*.mlpackage/
+*.mlpackage

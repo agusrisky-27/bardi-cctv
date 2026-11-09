@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 import pytest
 
+from memdb import memory_storage
 from rcis.config.settings import AppConfig
 from rcis.pipeline import VideoAnalyticsPipeline
 from rcis.video.file_source import FileVideoSource
@@ -37,7 +38,10 @@ def create_synthetic_test_video(path: Path, num_frames: int = 30) -> None:
     out.release()
 
 
-def test_end_to_end_pipeline(tmp_path: Path):
+def test_end_to_end_pipeline(tmp_path: Path, monkeypatch):
+    # never touch the real MySQL or data/backups
+    monkeypatch.setattr("rcis.pipeline.Storage.from_env", staticmethod(memory_storage))
+    monkeypatch.setenv("RCIS_BACKUP_DIR", str(tmp_path / "backups"))
     video_path = tmp_path / "test_synthetic.mp4"
     output_video_path = tmp_path / "annotated_output.mp4"
 

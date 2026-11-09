@@ -7,7 +7,7 @@ import supervision as sv
 
 from rcis.analytics import RestaurantAnalytics, load_zones
 from rcis.config.settings import AnalyticsConfig
-from rcis.storage import Storage
+from memdb import memory_storage
 
 W, H = 1000, 1000
 
@@ -35,7 +35,7 @@ def _make(tmp_path) -> RestaurantAnalytics:
         visit_timeout_seconds=3, table_merge_gap_seconds=4, heatmap_save_every_seconds=1e9,
     )
     zones, line = load_zones(zones_yaml, W, H)
-    return RestaurantAnalytics(cfg, (W, H), zones, line, Storage(":memory:"))
+    return RestaurantAnalytics(cfg, (W, H), zones, line, memory_storage())
 
 
 def test_walk_in_sit_and_leave(tmp_path):
@@ -63,7 +63,7 @@ def test_walk_in_sit_and_leave(tmp_path):
     assert zone[0] == "meja_1" and zone[1] == 1 and zone[2] >= 10
     session = db.execute("SELECT seated_at, left_at FROM table_sessions").fetchone()
     assert session[0] is not None and session[1] is not None
-    assert db.execute("SELECT visitors FROM hourly_stats").fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) FROM visits WHERE role = 'customer'").fetchone()[0] == 1
     assert a.heatmap.sum() == 27
 
 
@@ -80,8 +80,8 @@ def test_id_switch_keeps_one_table_session(tmp_path):
 
 
 def test_food_wait_seconds(tmp_path):
-    s = Storage(":memory:")
+    s = memory_storage()
     sid = s.open_table_session("meja_1", 1_700_000_000.0)
-    s.set_food_arrived(sid, 1_700_000_090.0)
-    s.set_food_arrived(sid, 1_700_000_500.0)  # later plates do not overwrite the first arrival
+    s.set_food_arrived(sid, 1_700_000_090.0, 90.0)
+    s.set_food_arrived(sid, 1_700_000_500.0, 500.0)  # later plates do not overwrite the first arrival
     assert s.conn.execute("SELECT wait_seconds FROM table_sessions").fetchone()[0] == 90.0

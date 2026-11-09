@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 
 import numpy as np
 import supervision as sv
@@ -10,7 +9,7 @@ import supervision as sv
 from rcis.analytics import RestaurantAnalytics, load_zones
 from rcis.config.settings import AnalyticsConfig
 from rcis.gender import aggregate_votes
-from rcis.storage import Storage
+from memdb import memory_storage
 
 W, H = 1000, 1000
 NAMES = ["female", "male"]
@@ -39,7 +38,7 @@ def _make(tmp_path, zones_extra: str = "") -> RestaurantAnalytics:
                           visit_timeout_seconds=3, table_merge_gap_seconds=4, heatmap_save_every_seconds=1e9,
                           food_confirm_seconds=2, staff_min_tables=2)
     zones, line = load_zones(y, W, H)
-    return RestaurantAnalytics(cfg, (W, H), zones, line, Storage(":memory:"))
+    return RestaurantAnalytics(cfg, (W, H), zones, line, memory_storage())
 
 
 def _sit(a: RestaurantAnalytics, t0: float, seconds: float = 8) -> float:
@@ -94,7 +93,7 @@ def test_waiter_overlap_marks_staff_and_skips_table_session(tmp_path):
     a.update(sv.Detections.empty(), t + 30)
     row = a.storage.conn.execute("SELECT role, gender_est FROM visits").fetchone()
     assert row == ("staff", None)
-    assert a.storage.conn.execute("SELECT COUNT(*) FROM hourly_stats").fetchone()[0] == 0  # customers only
+    assert a.storage.conn.execute("SELECT COUNT(*) FROM visits WHERE role = 'customer'").fetchone()[0] == 0
 
 
 def test_walking_between_tables_marks_staff(tmp_path):
@@ -113,19 +112,6 @@ def test_gender_goes_to_visit_for_customers(tmp_path):
         a.update(_det(1, 700, 700), t + i * 0.5)
     a.update(sv.Detections.empty(), t + 20)
     assert a.storage.conn.execute("SELECT role, gender_est, gender_conf FROM visits").fetchone() == ("customer", "female", 0.91)
-    assert a.storage.conn.execute("SELECT female FROM hourly_stats").fetchone()[0] == 1
-
-
-def test_old_db_gets_role_column(tmp_path):
-    db = tmp_path / "old.db"
-    con = sqlite3.connect(db)
-    con.execute("CREATE TABLE visits (id INTEGER PRIMARY KEY, track_id INTEGER, entered_at TEXT, exited_at TEXT,"
-                " entry_side TEXT, gender_est TEXT, gender_conf REAL, total_seconds REAL)")
-    con.commit()
-    con.close()
-    s = Storage(db)
-    s.add_visit(1, 0, 10, "kiri", None, None, "staff")
-    assert s.conn.execute("SELECT role FROM visits").fetchone()[0] == "staff"
 
 
 def test_office_mode_never_marks_desk_hoppers_as_staff(tmp_path):
@@ -135,3 +121,26 @@ def test_office_mode_never_marks_desk_hoppers_as_staff(tmp_path):
     for i, x in enumerate([700, 700, 200, 200, 700, 700]):
         a.update(_det(1, x, 700), t + i)
     assert not a.tracks[1].is_staff
+
+def test_id_switch_is_relinked_into_one_visit(tmp_path):
+    a = _make(tmp_path)
+    a.gender_lookup = lambda tid: ("male", 0.8) if tid == 1 else (None, None)
+    t = 1_700_000_000.0
+    for i in range(10):
+        a.update(_det(1, 700, 700), t + i * 0.5)
+    for i in range(10):  # tracker lost ID 1 and gave the same person ID 2, a few pixels away
+        a.update(_det(2, 710, 705), t + 6 + i * 0.5)
+    a.update(sv.Detections.empty(), t + 30)
+    rows = a.storage.conn.execute("SELECT entered_at, exited_at, gender_est FROM visits").fetchall()
+    assert len(rows) == 1 and rows[0][2] == "male"
+
+
+def test_far_new_id_is_a_new_person(tmp_path):
+    a = _make(tmp_path)
+    t = 1_700_000_000.0
+    for i in range(6):
+        a.update(_det(1, 700, 700), t + i * 0.5)
+    for i in range(6):
+        a.update(_det(2, 100, 300), t + 3 + i * 0.5)
+    a.update(sv.Detections.empty(), t + 30)
+    assert a.storage.conn.execute("SELECT COUNT(*) FROM visits").fetchone()[0] == 2

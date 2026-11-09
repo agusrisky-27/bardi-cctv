@@ -60,6 +60,7 @@ class TrackState:
     is_staff: bool = False  # sticky: waiter detector, staff zone, or walks between many tables
     laptop_start: Optional[float] = None
     laptop_last: Optional[float] = None
+    gender: Tuple[Optional[str], Optional[float]] = (None, None)  # votes of tracker IDs merged into this one
 
 
 def load_zones(path: str | Path, frame_w: int, frame_h: int) -> Tuple[List[Zone], Optional[sv.LineZone]]:
@@ -146,18 +147,22 @@ class RestaurantAnalytics:
             crossed_in, crossed_out = (
                 self.door_line.trigger(detections) if self.door_line else (None, None)
             )
+            current = {int(tid) for tid in detections.tracker_id}
             for i, tid in enumerate(detections.tracker_id):
                 tid = int(tid)
                 x, y = float(feet[i, 0]), float(feet[i, 1])
                 st = self.tracks.get(tid)
                 if st is None:
-                    st = self.tracks[tid] = TrackState(first_t=t, last_t=t, entry_side=self._edge_side(x, y))
+                    st = self.tracks[tid] = self._relink(x, y, current) or TrackState(
+                        first_t=t, last_t=t, entry_side=self._edge_side(x, y))
                 st.last_t = t
                 st.history.append((t, x, y))
                 self._update_motion(st, t)
                 self._update_zones(tid, st, {n: bool(m[i]) for n, m in inside.items()}, t)
                 st.waiter_hits += int(waiter_hit[i])
-                self._update_laptop(tid, st, bool(near_laptop[i]) and st.still_since is not None, t)
+                # No 'still' check: typing and arm movement resize the box and broke sessions. Passers-by are
+                # filtered by laptop_min_seconds instead (nobody walks past a laptop for 5 s).
+                self._update_laptop(tid, st, bool(near_laptop[i]), t)
                 st.is_staff = (
                     st.is_staff
                     or st.waiter_hits >= self.cfg.staff_waiter_hits
@@ -181,6 +186,27 @@ class RestaurantAnalytics:
             self._last_save_t = t
             self.save_heatmap()
 
+    def _relink(self, x: float, y: float, current: Set[int]) -> Optional[TrackState]:
+        """Tracker ID switch (occlusion, arms raised): give the new ID the state of the nearest just-lost
+        track, so one person stays one visit with one entry side, dwell time and sitting timer."""
+        if self.cfg.relink_max_distance <= 0:
+            return None
+        best, best_d = None, self.cfg.relink_max_distance * self.h
+        for old, st in self.tracks.items():  # lost tracks stay here until visit_timeout_seconds
+            if old in current or not st.history:
+                continue
+            d = float(np.hypot(st.history[-1][1] - x, st.history[-1][2] - y))
+            if d <= best_d:
+                best, best_d = old, d
+        if best is None:
+            return None
+        st = self.tracks.pop(best)
+        if self.gender_lookup:
+            gender = self.gender_lookup(best)  # frees the old ID's votes
+            if gender[0] is not None:
+                st.gender = gender
+        return st
+
     def _update_motion(self, st: TrackState, t: float) -> None:
         """Mark a track 'still' when its footpoint barely moves over the speed window."""
         while len(st.history) > 2 and t - st.history[0][0] > self.cfg.speed_window_seconds:
@@ -203,7 +229,7 @@ class RestaurantAnalytics:
                     st.tables_visited.add(z.name)
             elif not inside[z.name] and z.name in st.zones:
                 self._close_zone(tid, st, z.name, t)
-        st.sitting = (
+        st.sitting = (  # restaurant only (table sessions / food wait); office has no table zones
             not st.is_staff
             and st.still_since is not None
             and t - st.still_since >= self.cfg.sitting_min_seconds
@@ -226,7 +252,7 @@ class RestaurantAnalytics:
         return near
 
     def _update_laptop(self, tid: int, st: TrackState, using: bool, t: float) -> None:
-        """Still person + laptop in front = laptop session; short detection gaps are tolerated."""
+        """Laptop in front of the person = laptop session; short detection gaps are tolerated."""
         if using:
             if st.laptop_start is None:
                 st.laptop_start = t
@@ -305,7 +331,7 @@ class RestaurantAnalytics:
                     sess["food_done"] = True
                     self._food_seen.pop(z.name, None)
                     if sess["id"] is not None:
-                        self._store("set_food_arrived", sess["id"], t)
+                        self._store("set_food_arrived", sess["id"], t, t - sess["seated_at"])
 
     def _close_table(self, name: str) -> None:
         sess = self.table_sessions.pop(name)
@@ -320,6 +346,8 @@ class RestaurantAnalytics:
                 self._close_zone(tid, st, name, st.last_t)
             self._close_laptop(tid, st)
             gender, conf = self.gender_lookup(tid) if self.gender_lookup else (None, None)  # also frees memory
+            if gender is None:
+                gender, conf = st.gender
             if st.last_t - st.first_t >= self.cfg.min_visit_seconds:
                 role = "staff" if st.is_staff else "customer"
                 if st.is_staff:
@@ -397,8 +425,8 @@ class RestaurantAnalytics:
                 st = self.tracks.get(int(tid))
                 if st is None:
                     continue
-                tags = [n for n, on in (("staf", st.is_staff), ("duduk", st.sitting), ("laptop", self._laptop_active(st))) if on]
-                if tags:
-                    cv2.putText(frame, "+".join(tags), (int(x) - 20, int(y) + 16),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 120, 255) if st.is_staff else (80, 200, 80), 2)
+                tags = [n for n, on in (("staf", st.is_staff), ("laptop", self._laptop_active(st))) if on]
+                tags.append(f"{int(self._now - st.first_t) // 60} mnt")  # time in room so far
+                cv2.putText(frame, " ".join(tags), (int(x) - 20, int(y) + 16),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 120, 255) if st.is_staff else (80, 200, 80), 2)
         return frame

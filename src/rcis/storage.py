@@ -1,127 +1,108 @@
 """
-SQLite storage for anonymous, aggregated analytics.
+MySQL storage for anonymous, aggregated analytics (database `rcis`, shared with the Laravel dashboard).
 
-Privacy: only temporary track IDs, timestamps, zone names, durations and the
-voted gender label are stored. No images, crops, embeddings or identities.
+The tables are created by dashboard/database/rcis.sql (phpMyAdmin import) or `php artisan migrate`.
+Privacy: only temporary track IDs, timestamps, zone names, durations and the voted gender label are
+stored. No images, crops, embeddings or identities.
 """
 
 from __future__ import annotations
 
+from collections import deque
 from datetime import datetime
 import logging
+import os
 from pathlib import Path
 import shutil
-import sqlite3
-from typing import Optional
+import subprocess
+import time
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger("rcis.storage")
 
-# shortcut: stdlib sqlite3 instead of SQLAlchemy (no extra dependency); switch if a server DB is needed.
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS visits (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    track_id INTEGER NOT NULL,
-    entered_at TEXT NOT NULL,
-    exited_at TEXT,
-    entry_side TEXT,
-    gender_est TEXT,
-    gender_conf REAL,
-    total_seconds REAL,
-    role TEXT NOT NULL DEFAULT 'customer'  -- customer / staff (waiter)
-);
-CREATE TABLE IF NOT EXISTS zone_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    track_id INTEGER NOT NULL,
-    zone_name TEXT NOT NULL,
-    enter_at TEXT NOT NULL,
-    exit_at TEXT,
-    seconds REAL,
-    is_sitting INTEGER NOT NULL DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS table_sessions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    table_zone TEXT NOT NULL,
-    seated_at TEXT NOT NULL,
-    food_arrived_at TEXT,
-    wait_seconds REAL,
-    left_at TEXT
-);
-CREATE TABLE IF NOT EXISTS alerts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    type TEXT NOT NULL,
-    zone_name TEXT,
-    created_at TEXT NOT NULL,
-    snapshot_path_blurred TEXT
-);
-CREATE TABLE IF NOT EXISTS line_crossings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    track_id INTEGER NOT NULL,
-    direction TEXT NOT NULL,          -- 'in' / 'out'
-    entry_side TEXT,                  -- kiri / kanan / depan (asal lintasan)
-    crossed_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS activity_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    track_id INTEGER NOT NULL,
-    activity TEXT NOT NULL,           -- e.g. 'laptop' (sitting in front of a laptop)
-    start_at TEXT NOT NULL,
-    end_at TEXT NOT NULL,
-    seconds REAL NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_visits_entered ON visits(entered_at);
-CREATE INDEX IF NOT EXISTS idx_activity_start ON activity_events(start_at);
-CREATE INDEX IF NOT EXISTS idx_zone_events_zone ON zone_events(zone_name);
-
-"""
+ANALYTICS_TABLES = ("visits", "zone_events", "table_sessions", "alerts", "line_crossings", "activity_events", "live_status")
+RETRY_SECONDS = 30  # after MySQL drops out, so a dead server does not stall every frame with connect timeouts
+PENDING_MAX = 50_000  # rows kept in memory while MySQL is down (~hours of office traffic)
+XAMPP_MYSQLDUMP = "/Applications/XAMPP/xamppfiles/bin/mysqldump"
 
 
-VIEW = """
--- hourly_stats is a view so it never drifts from the raw anonymous rows.
-DROP VIEW IF EXISTS hourly_stats;
-CREATE VIEW hourly_stats AS
-SELECT v.hour,
-       v.visitors, v.male, v.female, v.unknown, v.avg_dwell,
-       f.avg_food_wait
-FROM (
-    SELECT strftime('%Y-%m-%d %H:00', entered_at) AS hour,
-           COUNT(*) AS visitors,
-           IFNULL(SUM(gender_est = 'male'), 0) AS male,
-           IFNULL(SUM(gender_est = 'female'), 0) AS female,
-           SUM(gender_est IS NULL OR gender_est NOT IN ('male', 'female')) AS unknown,
-           AVG(total_seconds) AS avg_dwell
-    FROM visits WHERE role = 'customer' GROUP BY hour
-) v
-LEFT JOIN (
-    SELECT strftime('%Y-%m-%d %H:00', seated_at) AS hour, AVG(wait_seconds) AS avg_food_wait
-    FROM table_sessions WHERE wait_seconds IS NOT NULL GROUP BY hour
-) f ON f.hour = v.hour;
-"""
+def _dt(ts: Optional[float]) -> Optional[str]:
+    return None if ts is None else datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _iso(ts: Optional[float]) -> Optional[str]:
-    return None if ts is None else datetime.fromtimestamp(ts).isoformat(timespec="seconds")
+def mysql_settings() -> dict:
+    """Connection settings from .env (RCIS_MYSQL_HOST / _PORT / _USER / _PASSWORD / _DATABASE)."""
+    return dict(
+        host=os.environ.get("RCIS_MYSQL_HOST") or "127.0.0.1",
+        port=int(os.environ.get("RCIS_MYSQL_PORT") or 3306),
+        user=os.environ.get("RCIS_MYSQL_USER") or "root",
+        password=os.environ.get("RCIS_MYSQL_PASSWORD") or "",
+        database=os.environ.get("RCIS_MYSQL_DATABASE") or "rcis",
+    )
 
 
 class Storage:
-    """Thin writer over SQLite. All timestamps are epoch seconds, stored as local ISO strings."""
+    """Writes analytics rows. If MySQL drops out mid-run, rows wait in memory and are sent when it is back."""
 
-    def __init__(self, db_path: str | Path) -> None:
-        path = Path(db_path)
-        if str(db_path) != ":memory:":
-            path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        self.conn.execute("PRAGMA journal_mode=WAL")  # dashboard can read while the pipeline writes
-        self.conn.executescript(SCHEMA)
-        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(visits)")}
-        if "role" not in cols:  # DB created before the role column existed
-            self.conn.execute("ALTER TABLE visits ADD COLUMN role TEXT NOT NULL DEFAULT 'customer'")
-        self.conn.executescript(VIEW)
-        self.conn.commit()
+    def __init__(self, connect: Callable[[], Any], placeholder: str = "%s", settings: Optional[dict] = None) -> None:
+        self._connect = connect
+        self._placeholder = placeholder  # "%s" for PyMySQL; tests pass "?" with an in-memory stand-in
+        self._settings = settings or {}
+        self._pending: deque = deque(maxlen=PENDING_MAX)
+        self._retry_at = 0.0
+        self.conn = connect()  # fail fast: the pipeline must not start while MySQL is off
 
-    def _insert(self, sql: str, params: tuple) -> int:
-        cur = self.conn.execute(sql, params)
-        self.conn.commit()
-        return int(cur.lastrowid)
+    @classmethod
+    def from_env(cls) -> "Storage":
+        import pymysql
+
+        settings = mysql_settings()
+        try:
+            return cls(lambda: pymysql.connect(**settings, charset="utf8mb4", connect_timeout=3), settings=settings)
+        except pymysql.MySQLError as e:
+            raise SystemExit(
+                f"MySQL tidak bisa dihubungi di {settings['host']}:{settings['port']} ({e}). "
+                "Nyalakan MySQL di XAMPP dan cek RCIS_MYSQL_* di .env."
+            ) from None
+
+    # ------------------------------------------------------------------ writing
+    def _write(self, sql: str, params: tuple) -> Optional[int]:
+        """Queue one statement and send everything waiting. Returns the new row id, or None if MySQL is down."""
+        if self._placeholder != "%s":
+            sql = sql.replace("%s", self._placeholder)
+        self._pending.append((sql, params))
+        return self._flush()
+
+    def _flush(self) -> Optional[int]:
+        if not self._pending or time.time() < self._retry_at:
+            return None
+        last_id = None
+        try:
+            if self.conn is None:
+                self.conn = self._connect()
+                logger.info("MySQL tersambung lagi, mengirim %d baris yang tertunda.", len(self._pending))
+            cur = self.conn.cursor()
+            while self._pending:
+                cur.execute(*self._pending[0])
+                self.conn.commit()
+                self._pending.popleft()
+                last_id = cur.lastrowid
+            return int(last_id) if last_id else None
+        except Exception as e:  # MySQL stopped, network, timeout: keep analysing, retry later
+            if len(self._pending) == PENDING_MAX:
+                logger.error("Antrian MySQL penuh (%d baris): data tertua mulai terbuang.", PENDING_MAX)
+            logger.warning("MySQL gagal (%s); %d baris ditahan, coba lagi %d dtk.", e, len(self._pending), RETRY_SECONDS)
+            self._disconnect()
+            self._retry_at = time.time() + RETRY_SECONDS
+            return None
+
+    def _disconnect(self) -> None:
+        try:
+            if self.conn is not None:
+                self.conn.close()
+        except Exception:
+            pass
+        self.conn = None
 
     def add_visit(
         self,
@@ -132,71 +113,83 @@ class Storage:
         gender_est: Optional[str] = None,
         gender_conf: Optional[float] = None,
         role: str = "customer",
-    ) -> int:
-        return self._insert(
+    ) -> Optional[int]:
+        return self._write(
             "INSERT INTO visits (track_id, entered_at, exited_at, entry_side, gender_est, gender_conf, total_seconds, role)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (track_id, _iso(entered_at), _iso(exited_at), entry_side, gender_est, gender_conf,
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (track_id, _dt(entered_at), _dt(exited_at), entry_side, gender_est, gender_conf,
              round(exited_at - entered_at, 2), role),
         )
 
-    def add_zone_event(self, track_id: int, zone_name: str, enter_at: float, exit_at: float, is_sitting: bool) -> int:
-        return self._insert(
-            "INSERT INTO zone_events (track_id, zone_name, enter_at, exit_at, seconds, is_sitting) VALUES (?, ?, ?, ?, ?, ?)",
-            (track_id, zone_name, _iso(enter_at), _iso(exit_at), round(exit_at - enter_at, 2), int(is_sitting)),
+    def add_zone_event(self, track_id: int, zone_name: str, enter_at: float, exit_at: float, is_sitting: bool) -> Optional[int]:
+        return self._write(
+            "INSERT INTO zone_events (track_id, zone_name, enter_at, exit_at, seconds, is_sitting) VALUES (%s, %s, %s, %s, %s, %s)",
+            (track_id, zone_name, _dt(enter_at), _dt(exit_at), round(exit_at - enter_at, 2), int(is_sitting)),
         )
 
-    def add_line_crossing(self, track_id: int, direction: str, entry_side: Optional[str], crossed_at: float) -> int:
-        return self._insert(
-            "INSERT INTO line_crossings (track_id, direction, entry_side, crossed_at) VALUES (?, ?, ?, ?)",
-            (track_id, direction, entry_side, _iso(crossed_at)),
+    def add_line_crossing(self, track_id: int, direction: str, entry_side: Optional[str], crossed_at: float) -> Optional[int]:
+        return self._write(
+            "INSERT INTO line_crossings (track_id, direction, entry_side, crossed_at) VALUES (%s, %s, %s, %s)",
+            (track_id, direction, entry_side, _dt(crossed_at)),
         )
 
-    def add_activity(self, track_id: int, activity: str, start_at: float, end_at: float) -> int:
-        return self._insert(
-            "INSERT INTO activity_events (track_id, activity, start_at, end_at, seconds) VALUES (?, ?, ?, ?, ?)",
-            (track_id, activity, _iso(start_at), _iso(end_at), round(end_at - start_at, 2)),
+    def add_activity(self, track_id: int, activity: str, start_at: float, end_at: float) -> Optional[int]:
+        return self._write(
+            "INSERT INTO activity_events (track_id, activity, start_at, end_at, seconds) VALUES (%s, %s, %s, %s, %s)",
+            (track_id, activity, _dt(start_at), _dt(end_at), round(end_at - start_at, 2)),
         )
 
-    def add_alert(self, alert_type: str, zone_name: Optional[str], created_at: float, snapshot: Optional[str]) -> int:
-        return self._insert(
-            "INSERT INTO alerts (type, zone_name, created_at, snapshot_path_blurred) VALUES (?, ?, ?, ?)",
-            (alert_type, zone_name, _iso(created_at), snapshot),
+    def add_alert(self, alert_type: str, zone_name: Optional[str], created_at: float, snapshot: Optional[str]) -> Optional[int]:
+        return self._write(
+            "INSERT INTO alerts (type, zone_name, created_at, snapshot_path_blurred) VALUES (%s, %s, %s, %s)",
+            (alert_type, zone_name, _dt(created_at), snapshot),
         )
 
-    def open_table_session(self, table_zone: str, seated_at: float) -> int:
-        return self._insert(
-            "INSERT INTO table_sessions (table_zone, seated_at) VALUES (?, ?)", (table_zone, _iso(seated_at))
-        )
+    def open_table_session(self, table_zone: str, seated_at: float) -> Optional[int]:
+        return self._write("INSERT INTO table_sessions (table_zone, seated_at) VALUES (%s, %s)", (table_zone, _dt(seated_at)))
 
     def close_table_session(self, session_id: int, left_at: float) -> None:
-        self.conn.execute("UPDATE table_sessions SET left_at = ? WHERE id = ?", (_iso(left_at), session_id))
-        self.conn.commit()
+        self._write("UPDATE table_sessions SET left_at = %s WHERE id = %s", (_dt(left_at), session_id))
 
-    def set_food_arrived(self, session_id: int, arrived_at: float) -> None:
-        """Used by the food detector (Phase 3) or manual/POS input. Only the first arrival counts."""
-        self.conn.execute(
-            "UPDATE table_sessions SET food_arrived_at = ?,"
-            " wait_seconds = ROUND((julianday(?) - julianday(seated_at)) * 86400, 2)"
-            " WHERE id = ? AND food_arrived_at IS NULL",
-            (_iso(arrived_at), _iso(arrived_at), session_id),
+    def set_food_arrived(self, session_id: int, arrived_at: float, wait_seconds: float) -> None:
+        """Used by the food detector (restaurant stage). Only the first arrival counts."""
+        self._write(
+            "UPDATE table_sessions SET food_arrived_at = %s, wait_seconds = %s WHERE id = %s AND food_arrived_at IS NULL",
+            (_dt(arrived_at), round(wait_seconds, 2), session_id),
         )
-        self.conn.commit()
 
+    def set_live(self, stats: dict) -> None:
+        """Current counters for the dashboard's "Saat ini" panel (one row, id 1)."""
+        self._write(
+            "REPLACE INTO live_status (id, people_now, laptop_now, count_in, count_out, fps, updated_at)"
+            " VALUES (1, %s, %s, %s, %s, %s, %s)",
+            (stats.get("people_now", 0), stats.get("laptop_now", 0), stats.get("count_in", 0), stats.get("count_out", 0),
+             stats.get("fps"), _dt(time.time())),
+        )
+
+    # ------------------------------------------------------------------ backup
     def backup(self, dest_dir: str | Path, keep_days: int = 14) -> Path:
-        """Consistent online copy (safe while writing): one file per day + rcis_latest.db; older dailies deleted."""
+        """mysqldump of the analytics tables (not user accounts): one .sql per day + rcis_latest.sql; old dailies deleted."""
+        s = self._settings
+        dump = os.environ.get("RCIS_MYSQLDUMP") or shutil.which("mysqldump") or XAMPP_MYSQLDUMP
         dest = Path(dest_dir).expanduser()
         dest.mkdir(parents=True, exist_ok=True)
-        daily = dest / f"rcis_{datetime.now():%Y-%m-%d}.db"
-        out = sqlite3.connect(str(daily))
-        try:
-            self.conn.backup(out)
-        finally:
-            out.close()
-        shutil.copy2(daily, dest / "rcis_latest.db")
-        for old in sorted(dest.glob("rcis_????-??-??.db"))[:-keep_days]:  # names sort by date
+        daily = dest / f"rcis_{datetime.now():%Y-%m-%d}.sql"
+        with open(daily, "wb") as out:
+            subprocess.run(
+                [dump, "-h", s["host"], "-P", str(s["port"]), "-u", s["user"], "--single-transaction",
+                 "--skip-comments", s["database"], *ANALYTICS_TABLES],
+                stdout=out, stderr=subprocess.PIPE, check=True, timeout=120,
+                env={**os.environ, "MYSQL_PWD": s["password"]},  # not on the command line, so `ps` cannot show it
+            )
+        shutil.copy2(daily, dest / "rcis_latest.sql")
+        for old in sorted(dest.glob("rcis_????-??-??.sql"))[:-keep_days]:  # names sort by date
             old.unlink()
         return daily
 
     def close(self) -> None:
-        self.conn.close()
+        self._retry_at = 0.0
+        self._flush()
+        if self._pending:
+            logger.error("%d baris belum terkirim ke MySQL dan hilang saat program berhenti.", len(self._pending))
+        self._disconnect()

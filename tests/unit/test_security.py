@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from datetime import datetime
 
 import numpy as np
@@ -11,8 +13,8 @@ from fastapi.testclient import TestClient
 from rcis.analytics import RestaurantAnalytics, load_zones
 from rcis.config.settings import AnalyticsConfig, SecurityConfig
 from rcis.security import Security, blur_faces
-from rcis.storage import Storage
-from rcis.web import create_app, query_stats
+from memdb import memory_storage
+from rcis.web import create_app
 
 W = H = 1000
 
@@ -27,7 +29,7 @@ def _setup(tmp_path, **sec):
     zones_yaml.write_text("coordinate_format: normalized\nzones:\n"
                           "  - {name: gudang, kind: restricted, polygon: [[0.5, 0.5], [0.9, 0.5], [0.9, 0.9], [0.5, 0.9]]}\n"
                           "  - {name: meja, kind: table, polygon: [[0.0, 0.5], [0.4, 0.5], [0.4, 0.9], [0.0, 0.9]]}\n")
-    storage = Storage(":memory:")
+    storage = memory_storage()
     zones, line = load_zones(zones_yaml, W, H)
     analytics = RestaurantAnalytics(AnalyticsConfig(exports_dir=str(tmp_path), heatmap_save_every_seconds=1e9,
                                                     sitting_min_seconds=5, speed_window_seconds=1.0),
@@ -108,16 +110,23 @@ def test_telegram_failure_does_not_leak_token_or_crash(tmp_path, caplog):
     assert "SECRET123" not in caplog.text and "ConnectionError" in caplog.text
 
 
-def test_alerts_in_stats_and_snapshot_endpoint(tmp_path):
+def test_alert_row_and_snapshot_endpoint(tmp_path):
     a, sec, storage, sent = _setup(tmp_path)
     now = datetime.now().timestamp()
     for i in range(3):
         _step(a, sec, _det(1, 700, 700), now + i * 0.5)
-    db = tmp_path / "web.db"
-    storage.conn.execute("VACUUM INTO ?", (str(db),))
-    stats = query_stats(Storage(db).conn, "today")
-    assert stats["alerts"][0]["type"] == "restricted_zone" and stats["alerts"][0]["snapshot"].endswith(".jpg")
-    client = TestClient(create_app(db, None, tmp_path, alerts_dir=tmp_path / "alerts"))
-    assert client.get(f"/alert-snapshot/{stats['alerts'][0]['snapshot']}").status_code == 200
+    kind, snapshot = storage.conn.execute("SELECT type, snapshot_path_blurred FROM alerts").fetchone()
+    name = Path(snapshot).name
+    assert kind == "restricted_zone" and name.endswith(".jpg")
+    client = TestClient(create_app(None, tmp_path, alerts_dir=tmp_path / "alerts"))
+    assert client.get(f"/alert-snapshot/{name}").status_code == 200
     assert client.get("/alert-snapshot/..%2Fweb.db").status_code == 404
     assert client.get("/alert-snapshot/missing.jpg").status_code == 404
+
+
+def test_loitering_off_when_zero(tmp_path):
+    a, sec, storage, sent = _setup(tmp_path, loiter_seconds=0)
+    t = 1_700_000_000.0
+    for i in range(0, 60, 2):
+        _step(a, sec, _det(1, 450 + (i % 4) * 50, 300 + (i % 6) * 20), t + i)
+    assert storage.conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0] == 0

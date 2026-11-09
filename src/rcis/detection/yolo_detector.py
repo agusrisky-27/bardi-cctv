@@ -51,6 +51,10 @@ class YOLODetector(BaseDetector):
         Load YOLO model weights. Checks local path first, otherwise downloads.
         """
         model_path = Path(self.config.model_path)
+        if not model_path.exists() and model_path.with_suffix(".pt").exists():
+            # Apple CoreML file removed: use the original PyTorch weights next to it (GPU via mps)
+            logger.warning("%s not found, using %s instead.", model_path, model_path.with_suffix(".pt"))
+            model_path = model_path.with_suffix(".pt")
         if model_path.exists():
             target_source = str(model_path.resolve())
             logger.info("Loading YOLO weights from local path: %s", target_source)
@@ -58,8 +62,9 @@ class YOLODetector(BaseDetector):
             target_source = self.config.model_name
             logger.info("Local weights not found at %s. Using default weights: %s", model_path, target_source)
 
-        model = YOLO(target_source)
-        model.to(self._device)
+        model = YOLO(target_source, task="detect")
+        if target_source.endswith(".pt"):  # exported models (.mlpackage) pick their own hardware
+            model.to(self._device)
         logger.info("YOLO model '%s' loaded onto device '%s'", target_source, self._device)
         return model
 

@@ -96,9 +96,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--web",
         action="store_true",
-        help="Serve the dashboard (live video + stats) at http://127.0.0.1:PORT",
+        help="Serve live video, heatmap and alert photos for the Laravel dashboard at http://127.0.0.1:PORT",
     )
-    parser.add_argument("--port", type=int, default=8000, help="Dashboard port (with --web)")
+    parser.add_argument("--port", type=int, default=8000, help="Video server port (with --web); dashboard RCIS_ENGINE_URL must match")
     parser.add_argument(
         "--loop",
         action="store_true",
@@ -149,8 +149,7 @@ def main() -> int:
 
         live = LiveState()
         password = web_password()
-        app = create_app(config.analytics.db_path, live, config.analytics.exports_dir, password,
-                         config.security.alerts_dir)
+        app = create_app(live, config.analytics.exports_dir, password, config.security.alerts_dir)
         start_server(app, args.port, password)
 
     # Instantiate and run pipeline

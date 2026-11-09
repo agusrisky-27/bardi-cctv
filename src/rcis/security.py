@@ -85,9 +85,9 @@ class Security:
                 self._alert("restricted_zone", z.name, t, frame, persons,
                             f"Orang terdeteksi di zona terlarang '{z.name}'", self.cfg.restricted_cooldown_seconds)
         for tid, st in now.items():
-            if (tid not in self._loiter_done and t - st.first_t >= self.cfg.loiter_seconds and not st.sitting
+            if (self.cfg.loiter_seconds and st.first_t not in self._loiter_done and t - st.first_t >= self.cfg.loiter_seconds and not st.sitting
                     and not st.is_staff and not analytics._laptop_active(st)):
-                self._loiter_done.add(tid)  # once per person
+                self._loiter_done.add(st.first_t)  # once per person; first_t survives tracker ID switches
                 self._alert("loitering", next(iter(st.zones), None), t, frame, persons,
                             f"Seseorang berada di area ini lebih dari {self.cfg.loiter_seconds / 60:.0f} menit", 0)
         if now and self._after_hours(t):

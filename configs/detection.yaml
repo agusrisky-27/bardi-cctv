@@ -1,7 +1,7 @@
 # RCIS Person Detection & Tracking Configuration
 detection:
-  model_name: "yolo11n.pt" # Ultralytics pretrained weights (nano size: ~5.4MB, fast on M4)
-  model_path: "models/yolo11n.pt"
+  model_name: "yolo11s.pt" # small: more accurate than nano on far/occluded people and laptops, still real time on M4
+  model_path: "models/yolo11s.mlpackage" # Apple CoreML (Neural Engine), exported at 960 px. Delete it = falls back to models/yolo11s.pt (GPU)
   
   # Compute target: "mps" (Apple Silicon Metal), "cpu", or "cuda"
   device: "mps"
@@ -12,13 +12,13 @@ detection:
   # Inference parameters
   confidence_threshold: 0.35
   iou_threshold: 0.50
-  input_size: 640
+  input_size: 960
   half_precision: false # PyTorch MPS handles FP32 natively; quantize=16 where supported
 
 tracking:
   tracker_type: "bytetrack"
   track_activation_threshold: 0.30
-  lost_track_buffer_frames: 30 # Number of frames to preserve lost track before removal (~1 second at 30fps)
+  lost_track_buffer_frames: 50 # processed frames to keep a lost track (~5 s: 20 FPS camera / frame_stride 2)
   minimum_matching_threshold: 0.80
   minimum_consecutive_frames: 3 # Minimum detections before confirming track
   trajectory_history_length: 60 # Number of historical footpoints to store for trail visualization
@@ -28,7 +28,7 @@ visualization:
   show_track_ids: true
   show_confidences: true
   show_footpoints: true
-  show_trajectories: true
+  show_trajectories: false        # trails of seated people only look like scribbles
   show_telemetry_hud: true
   box_thickness: 2
   text_scale: 0.5
@@ -36,14 +36,15 @@ visualization:
 # Restaurant analytics thresholds (seconds unless noted). Tune here, never hardcode.
 analytics:
   zones_path: "configs/zones.yaml"     # create with: python scripts/draw_zones.py
-  db_path: "data/rcis.db"
   exports_dir: "data/exports"          # heatmap.npy / heatmap.png land here
   frame_stride: 2                      # process every 2nd frame (target 5-10 FPS on Mac)
   sitting_max_speed: 0.03              # footpoint speed below this (frame heights / s) = still
-  sitting_min_seconds: 10              # still inside a table zone this long = "duduk"
+  sitting_min_seconds: 10              # restaurant only: still this long inside a table zone = "duduk"
   speed_window_seconds: 1.5
   visit_timeout_seconds: 5             # track unseen this long = person left
+  relink_max_distance: 0.2             # new tracker ID within 0.2 frame heights of a just-lost one = same person (0 = off)
   live_recent_seconds: 1               # dashboard "people now" counts only people seen in the last 1 s
+  live_update_seconds: 5               # write "people now" etc. to MySQL for the dashboard (database: RCIS_MYSQL_* in .env)
   min_visit_seconds: 2                 # ignore shorter tracks (false positives)
   table_merge_gap_seconds: 20          # table stays occupied across short occlusions / ID switches
   heatmap_scale: 0.25                  # heatmap grid = frame size x this
@@ -52,10 +53,11 @@ analytics:
   staff_waiter_hits: 2                 # waiter-detector overlaps before a track counts as staff
   food_confirm_seconds: 3              # plate must stay this long in a table zone = food arrived
   laptop_class_id: 63                  # COCO "laptop" (pretrained, no training). -1 = off
-  laptop_min_seconds: 5                # still + laptop in front for >= 5 s = laptop session
+  laptop_min_seconds: 5                # laptop in front of the person for >= 5 s = laptop session
+  laptop_min_confidence: 0.25          # laptops score lower than people (seen from behind / angled); persons stay at 0.35
   laptop_gap_seconds: 5                # laptop missed for <= 5 s keeps the session going
   laptop_near_margin: 0.3              # laptop counts as "theirs" within person box + 30%
-  backup_every_hours: 1                # copy data/rcis.db to RCIS_BACKUP_DIR (.env) every hour + at shutdown
+  backup_every_hours: 1                # mysqldump of the analytics tables to RCIS_BACKUP_DIR (.env) every hour + at shutdown
 
 # Optional models trained in Colab (see colab/*.ipynb). Missing file = feature off, nothing crashes.
 models:
@@ -80,7 +82,7 @@ models:
 security:
   alerts_dir: "data/alerts"            # face-blurred snapshots only
   restricted_cooldown_seconds: 60      # re-alert for the same restricted zone at most once per minute
-  loiter_seconds: 600                  # 10 min present without sitting at a table / using a laptop
+  loiter_seconds: 0                    # OFFICE: 0 = off (no sitting status, people stay for hours). Restaurant: 600
   after_hours_cooldown_seconds: 600
   open_hour: null                      # e.g. 8  -> alert when people are seen outside 08:00-22:00
   close_hour: null                     # e.g. 22    (null = after-hours alert off)
